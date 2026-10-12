@@ -1,0 +1,24 @@
+import { io } from 'socket.io-client';
+const BASE = 'http://127.0.0.1:3001';
+const stamp = Date.now();
+const api = (p, o = {}, t) => fetch(BASE + p, { ...o, headers: { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}) } }).then(r => r.json().catch(() => ({})));
+const reg = (u) => api('/auth/register', { method: 'POST', body: JSON.stringify({ username: u, email: u + '@ex.com', password: 'ValidPass123', birthDate: '1990-05-10', gender: 'FEMALE', acceptedTermsAt: new Date().toISOString() }) });
+const A = await reg('pres_a_' + stamp);
+console.log('A registered:', !!A.tokens);
+const sA = io(BASE, { auth: { token: A.tokens.accessToken }, transports: ['websocket'], reconnection: false });
+await new Promise(r => setTimeout(r, 1500));
+const q = await api('/analytics/queue', {}, A.tokens.accessToken);
+console.log('queue analytics:', JSON.stringify(q));
+// friend flow: B adds A, then both online check
+const B = await reg('pres_b_' + stamp);
+await api('/friends/requests', { method: 'POST', body: JSON.stringify({ username: 'pres_a_' + stamp }) }, B.tokens.accessToken);
+const pending = await api('/friends/requests', {}, A.tokens.accessToken);
+const reqId = pending?.[0]?.id;
+await api('/friends/requests/' + reqId + '/respond', { method: 'POST', body: JSON.stringify({ accept: true }) }, A.tokens.accessToken);
+const friends = await api('/friends', {}, B.tokens.accessToken);
+console.log('B friends list:', JSON.stringify(friends));
+sA.close();
+await new Promise(r => setTimeout(r, 1000));
+const q2 = await api('/analytics/queue', {}, B.tokens.accessToken);
+console.log('after A disconnect:', JSON.stringify(q2));
+process.exit(0);

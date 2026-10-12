@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Buddy — Meet new people, safely</title>
+  <base href="/">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="description" content="Buddy — random video & text chat with real people. 18+, safe by design with skip, block and report in one tap.">
+  <meta name="theme-color" content="#07060f">
+  <meta property="og:title" content="Buddy — Meet new people, safely.">
+  <meta property="og:description" content="Random video & text chat. Matched in seconds with people who want to meet you.">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="hero-orb.svg">
+  <link rel="icon" type="image/x-icon" href="favicon.ico">
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Sora:wght@600;700;800&display=swap" rel="stylesheet">
+  <script>
+    // Apply the stored theme before first paint so there is no flash of the wrong
+    // palette, and so every route (not just ones injecting ThemeService) respects it.
+    (function () {
+      try {
+        var m = localStorage.getItem('buddy:theme') || 'dark';
+        var light = m === 'light' || (m === 'auto' && window.matchMedia('(prefers-color-scheme: light)').matches);
+        var root = document.documentElement;
+        root.setAttribute('data-theme', light ? 'light' : 'dark');
+        root.style.colorScheme = light ? 'light' : 'dark';
+        var meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.setAttribute('content', light ? '#f4f3fa' : '#07060f');
+      } catch (e) {}
+    })();
+  </script>
+</head>
+<body>
+  <app-root></app-root>
+</body>
+</html>

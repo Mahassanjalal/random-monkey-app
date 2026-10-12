@@ -1,0 +1,15 @@
+{
+  "name": "Buddy — Meet new people, safely",
+  "short_name": "Buddy",
+  "description": "Random video & text chat. 18+ only, safe by design.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#07060f",
+  "theme_color": "#07060f",
+  "icons": [
+    { "src": "favicon.ico", "sizes": "48x48", "type": "image/x-icon" },
+    { "src": "hero-orb.svg", "sizes": "512x512", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

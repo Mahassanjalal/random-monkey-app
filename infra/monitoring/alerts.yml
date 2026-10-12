@@ -1,0 +1,15 @@
+groups:
+  - name: buddy
+    rules:
+      - alert: ApiDown
+        expr: up{job="buddy-api"} == 0
+        for: 2m
+        labels: { severity: critical }
+      - alert: QueueGrowing
+        expr: buddy_queue_size > 5000
+        for: 5m
+        labels: { severity: warning }
+      - alert: WsDropHigh
+        expr: rate(buddy_ws_disconnects_total[5m]) > 0.05
+        for: 5m
+        labels: { severity: warning }

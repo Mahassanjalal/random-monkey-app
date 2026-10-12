@@ -1,0 +1,491 @@
+// Prisma schema — dual-dialect: SQLite for local dev (DATABASE_PROVIDER=sqlite),
+// PostgreSQL for production. `provider` is set by generate scripts.
+// Postgres prod adds @db.Uuid / Json / extended enums — generated variants are derived from this file.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- core identity ----------
+
+model User {
+  id                 String   @id @default(uuid())
+  username           String   @unique
+  email              String   @unique
+  passwordHash       String   @map("password_hash")
+  role               String   @default("USER")
+  status             String   @default("ACTIVE")
+  birthDate          String   @map("birth_date")
+  ageAssurance       String   @default("SELF_DECLARED") @map("age_assurance")
+  suspendedUntil     DateTime?
+  onboardingStep     Int?
+  acceptedTermsAt    DateTime? @map("accepted_terms_at")
+  deletedAt          DateTime? @map("deleted_at")
+  authKey            String   @unique @map("auth_key") // used for auth-key login (dev & integration tests)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  profile            UserProfile?
+  preferences        UserPreference?
+  matchesCreated     Match[]        @relation("createdBy")
+  matchesParticipant MatchParticipant[]
+  messages           ChatMessage[]
+  friendRequestsSent FriendRequest[]  @relation("friendFrom")
+  friendRequestsRecv FriendRequest[]  @relation("friendTo")
+  friendshipsA       Friendship[]     @relation("friendshipUserA")
+  friendshipsB       Friendship[]     @relation("friendshipUserB")
+  followsGiven       Follow[]         @relation("followBy")
+  followsReceived    Follow[]         @relation("followTo")
+  blocksInitiated    Block[]          @relation("blockBy")
+  blocksReceived     Block[]          @relation("blockTo")
+  reportsFiled       UserReport[]     @relation("reportBy")
+  reportsReceived    UserReport[]     @relation("reportAgainst")
+  moderationCases    ModerationCase[] @relation("modCaseSubject")
+  appeals            Appeal[]
+  subscriptions      Subscription[]
+  transactions       PaymentTransaction[]
+  creditLedger       CreditLedger[]
+  notifications      Notification[]
+  sessions           UserSession[]
+  ageVerifications   AgeVerification[]
+  rtcStats           RtcStat[]
+  deviceFingerprints DeviceFingerprint[]
+  ratingsGiven       MatchRating[] @relation("ratingsGiven")
+  ratingsReceived    MatchRating[] @relation("ratingsReceived")
+
+  @@index([status])
+  @@index([deletedAt])
+  @@map("users")
+}
+
+model UserProfile {
+  id          String   @id @default(uuid())
+  userId      String   @unique @map("user_id")
+  displayName String   @map("display_name")
+  bio         String   @default("")
+  gender      String?
+  avatarHue   Int      @default(210) @map("avatar_hue")
+  interests   String   @default("[]") @map("interests") // JSON array string
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_profiles")
+}
+
+model UserPreference {
+  id                   String  @id @default(uuid())
+  userId               String  @unique @map("user_id")
+  seeking              String  @default("EVERYONE")
+  language             String?
+  country              String?
+  interests            String  @default("[]")
+  preferVerified       Boolean @default(false) @map("prefer_verified")
+  allowLanguageBoost   Boolean @default(true) @map("allow_language_boost")
+  chatModeDefault      String  @default("VIDEO") @map("chat_mode_default")
+  messageRetentionDays Int     @default(0)     @map("message_retention_days")
+  onlineVisibility     String  @default("EVERYONE") @map("online_visibility")
+  notifyFriendRequest  Boolean @default(true) @map("notify_friend_request")
+  notifyNewFollower    Boolean @default(true) @map("notify_new_follower")
+  notifyPromotions     Boolean @default(false) @map("notify_promotions")
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  user                 User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_preferences")
+}
+
+model AgeVerification {
+  id            String   @id @default(uuid())
+  userId        String   @map("user_id")
+  provider      String
+  assuranceLevel String  @map("assurance_level")
+  riskScore     Float    @default(0) @map("risk_score")
+  checkRef      String?  @map("check_ref")
+  metadataJson  String   @default("{}") @map("metadata_json")
+  createdAt     DateTime @default(now())
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("age_verifications")
+}
+
+model UserSession {
+  id              String   @id @default(uuid())
+  userId          String   @map("user_id")
+  refreshTokenHash String  @map("refresh_token_hash")
+  familyId        String   @map("family_id")
+  userAgent       String   @default("")
+  ipHash          String   @default("") @map("ip_hash")
+  expiresAt       DateTime @map("expires_at")
+  revokedAt       DateTime? @map("revoked_at")
+  rotatedFrom     String?  @map("rotated_from")
+  createdAt       DateTime @default(now())
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+  @@map("user_sessions")
+}
+
+// ---------- matching ----------
+
+model Match {
+  id                String   @id @default(uuid())
+  mode             String   // VIDEO | TEXT
+  status           String   @default("ACTIVE") // ACTIVE | ENDED | SKIPPED
+  channelId        String   @unique @map("channel_id")
+  policyVersion    Int      @map("policy_version")
+  createdById      String   @map("created_by_id")
+  createdAt        DateTime @default(now())
+  endedAt          DateTime? @map("ended_at")
+  endReason        String?  @map("end_reason")
+  connectionState  String   @default("unknown") @map("connection_state")
+  connectedAt      DateTime? @map("connected_at")
+  mediaOk          Boolean? @map("media_ok")
+  createdBy        User     @relation("createdBy", fields: [createdById], references: [id], onDelete: Cascade)
+
+  participants     MatchParticipant[]
+  messages         ChatMessage[]
+  rtcStats         RtcStat[]
+  ratings          MatchRating[]
+
+  @@index([status, createdAt])
+  @@index([mode])
+  @@map("matches")
+}
+
+model MatchParticipant {
+  id          String   @id @default(uuid())
+  matchId     String   @map("match_id")
+  userId      String   @map("user_id")
+  role        String   @default("participant") // caller | callee | participant
+  joinedAt    DateTime @default(now())
+  leftAt      DateTime? @map("left_at")
+  match       Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([matchId, userId])
+  @@index([userId])
+  @@map("match_participants")
+}
+
+model MatchRating {
+  id        String   @id @default(uuid())
+  matchId   String   @map("match_id")
+  raterId   String   @map("rater_id")
+  rateeId   String   @map("ratee_id")
+  score     Int // 1..5
+  createdAt DateTime @default(now())
+  match     Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  rater     User     @relation("ratingsGiven", fields: [raterId], references: [id], onDelete: Cascade)
+  ratee     User     @relation("ratingsReceived", fields: [rateeId], references: [id], onDelete: Cascade)
+
+  @@unique([matchId, raterId])
+  @@index([rateeId])
+  @@map("match_ratings")
+}
+
+model ChatMessage {
+  id        String   @id @default(uuid())
+  matchId   String   @map("match_id")
+  senderId  String   @map("sender_id")
+  text      String
+  kind      String   @default("text")
+  createdAt DateTime @default(now())
+  match     Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  sender    User     @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([matchId, createdAt])
+  @@map("chat_messages")
+}
+
+// ---------- social graph ----------
+
+model FriendRequest {
+  id        String   @id @default(uuid())
+  fromUserId String  @map("from_user_id")
+  toUserId  String   @map("to_user_id")
+  status    String   @default("PENDING")
+  createdAt DateTime @default(now())
+  from      User     @relation("friendFrom", fields: [fromUserId], references: [id], onDelete: Cascade)
+  to        User     @relation("friendTo", fields: [toUserId], references: [id], onDelete: Cascade)
+
+  @@unique([fromUserId, toUserId])
+  @@index([toUserId, status])
+  @@map("friend_requests")
+}
+
+model Friendship {
+  id        String   @id @default(uuid())
+  userAId   String   @map("user_a_id")
+  userBId   String   @map("user_b_id")
+  since     DateTime @default(now())
+  a         User     @relation("friendshipUserA", fields: [userAId], references: [id], onDelete: Cascade)
+  b         User     @relation("friendshipUserB", fields: [userBId], references: [id], onDelete: Cascade)
+
+  @@unique([userAId, userBId])
+  @@map("friendships")
+}
+
+model Follow {
+  id          String   @id @default(uuid())
+  followerId  String   @map("follower_id")
+  followeeId  String   @map("followee_id")
+  createdAt   DateTime @default(now())
+  follower    User     @relation("followBy", fields: [followerId], references: [id], onDelete: Cascade)
+  followee    User     @relation("followTo", fields: [followeeId], references: [id], onDelete: Cascade)
+
+  @@unique([followerId, followeeId])
+  @@map("follows")
+}
+
+model Block {
+  id         String   @id @default(uuid())
+  userId     String   @map("user_id")
+  blockedId  String   @map("blocked_id")
+  createdAt  DateTime @default(now())
+  user       User     @relation("blockBy", fields: [userId], references: [id], onDelete: Cascade)
+  blocked    User     @relation("blockTo", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, blockedId])
+  @@index([blockedId])
+  @@map("blocks")
+}
+
+// ---------- trust & safety ----------
+
+model UserReport {
+  id             String   @id @default(uuid())
+  matchId        String?  @map("match_id")
+  reporterId     String   @map("reporter_id")
+  reportedUserId String   @map("reported_user_id")
+  reason         String
+  severity       String   @default("MEDIUM") @map("severity")
+  details        String   @default("")
+  status         String   @default("OPEN")
+  caseId         String?  @map("case_id")
+  createdAt      DateTime @default(now())
+  resolvedAt     DateTime? @map("resolved_at")
+  reporter       User     @relation("reportBy", fields: [reporterId], references: [id], onDelete: Cascade)
+  reported       User     @relation("reportAgainst", fields: [reportedUserId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+  @@index([reportedUserId])
+  @@map("user_reports")
+}
+
+model ModerationCase {
+  id            String   @id @default(uuid())
+  subjectUserId String   @map("subject_user_id")
+  reportId      String?  @map("report_id")
+  source        String   @default("USER_REPORT") // USER_REPORT | AI_TEXT | AI_VIDEO | QUEUE_PATTERN
+  reason        String
+  severity      String
+  status        String   @default("OPEN")
+  aiScoresJson  String   @default("{}") @map("ai_scores_json")
+  aiProvider    String?  @map("ai_provider")
+  aiConfidence  Float?   @map("ai_confidence")
+  resolutionNote String  @default("") @map("resolution_note")
+  createdAt     DateTime @default(now())
+  resolvedAt    DateTime? @map("resolved_at")
+  assignedTo    String?  @map("assigned_to")
+
+  user          User     @relation("modCaseSubject", fields: [subjectUserId], references: [id], onDelete: Cascade)
+  actions       ModerationAction[]
+
+  @@index([status, createdAt])
+  @@index([subjectUserId])
+  @@map("moderation_cases")
+}
+
+model ModerationAction {
+  id          String   @id @default(uuid())
+  caseId      String   @map("case_id")
+  moderatorId String?  @map("moderator_id")
+  type        String
+  note        String   @default("")
+  until       DateTime?
+  createdAt   DateTime @default(now())
+  case        ModerationCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@index([caseId])
+  @@map("moderation_actions")
+}
+
+model Appeal {
+  id         String   @id @default(uuid())
+  userId     String   @map("user_id")
+  caseId     String   @map("case_id")
+  statement  String
+  status     String   @default("SUBMITTED")
+  decidedBy  String?  @map("decided_by")
+  decidedAt  DateTime? @map("decided_at")
+  decisionNote String @default("") @map("decision_note")
+  createdAt  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@index([userId])
+  @@map("appeals")
+}
+
+model DeviceFingerprint {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  fpHash    String   @map("fp_hash")
+  seenCount Int      @default(1) @map("seen_count")
+  firstSeen DateTime @default(now()) @map("first_seen")
+  lastSeen  DateTime @default(now()) @map("last_seen")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([fpHash])
+  @@map("device_fingerprints")
+}
+
+model SecurityEvent {
+  id        String   @id @default(uuid())
+  userId    String?  @map("user_id")
+  kind      String
+  severity  String   @default("info")
+  ipHash    String   @default("") @map("ip_hash")
+  detail    String   @default("")
+  createdAt DateTime @default(now())
+
+  @@index([kind, createdAt])
+  @@map("security_events")
+}
+
+// ---------- monetization ----------
+
+model Subscription {
+  id               String   @id @default(uuid())
+  userId           String   @map("user_id")
+  provider         String   @default("DISABLED")
+  externalId       String?  @map("external_id")
+  planKey          String   @map("plan_key")
+  status           String   @default("INACTIVE")
+  currentPeriodEnd DateTime? @map("current_period_end")
+  cancelAtPeriodEnd Boolean @default(false) @map("cancel_at_period_end")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  transactions     PaymentTransaction[]
+  @@index([userId, status])
+  @@map("subscriptions")
+}
+
+model PaymentTransaction {
+  id              String   @id @default(uuid())
+  userId          String   @map("user_id")
+  provider        String
+  externalId      String?  @map("external_id")
+  idempotencyKey  String   @unique @map("idempotency_key")
+  kind            String
+  amountCents     Int      @map("amount_cents")
+  currency        String   @default("USD")
+  status          String   @default("PENDING")
+  subscriptionId  String?  @map("subscription_id")
+  rawEvent        String?  @map("raw_event")
+  createdAt       DateTime @default(now())
+  completedAt     DateTime? @map("completed_at")
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscription    Subscription? @relation(fields: [subscriptionId], references: [id])
+
+  @@index([userId, status])
+  @@map("payment_transactions")
+}
+
+model CreditLedger {
+  id          String   @id @default(uuid())
+  userId      String   @map("user_id")
+  delta       Int
+  reason      String
+  idempotencyKey String @unique @map("idempotency_key")
+  balanceAfter Int     @map("balance_after")
+  metadataJson String  @default("{}") @map("metadata_json")
+  createdAt   DateTime @default(now())
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("credit_ledger")
+}
+
+// ---------- platform ops ----------
+
+model FeatureFlag {
+  key        String  @id
+  enabled    Boolean @default(false)
+  rolloutPct Int     @default(0) @map("rollout_pct")
+  note       String  @default("")
+  updatedAt  DateTime @updatedAt
+  updatedBy  String? @map("updated_by")
+
+  @@map("feature_flags")
+}
+
+model MatchingPolicyVersion {
+  id           String  @id @default(uuid())
+  version      Int     @unique
+  configJson   String  @map("config_json")
+  createdBy    String? @map("created_by")
+  note         String  @default("")
+  activeSince  DateTime? @map("active_since")
+  createdAt    DateTime @default(now())
+
+  @@map("matching_policy_versions")
+}
+
+model AdminAuditLog {
+  id         String   @id @default(uuid())
+  actorId    String   @map("actor_id")
+  action     String
+  targetType String   @map("target_type")
+  targetId   String?  @map("target_id")
+  metadataJson String @default("{}") @map("metadata_json")
+  createdAt  DateTime @default(now())
+
+  @@index([actorId, createdAt])
+  @@index([targetType, targetId])
+  @@map("admin_audit_log")
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  kind      String
+  title     String
+  body      String   @default("")
+  readAt    DateTime? @map("read_at")
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+  @@map("notifications")
+}
+
+// ---------- connection quality / rtc telemetry ----------
+
+model RtcStat {
+  id             String   @id @default(uuid())
+  matchId        String   @map("match_id")
+  reporterUserId String   @map("reporter_user_id")
+  state          String   @default("checking")
+  quality        String   @default("UNKNOWN")
+  packetsLost    Int?
+  rttMs          Int?
+  candidatesLocal String?  @map("candidates_local")
+  candidatesRemote String? @map("candidates_remote")
+  createdAt      DateTime @default(now())
+  match          Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  user           User     @relation(fields: [reporterUserId], references: [id], onDelete: Cascade)
+
+  @@index([matchId])
+  @@map("rtc_stats")
+}

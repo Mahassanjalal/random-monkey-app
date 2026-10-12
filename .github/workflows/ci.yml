@@ -1,0 +1,28 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build:shared
+      - run: npm run typecheck
+      - run: npm run test:backend
+      - run: npm run build:backend
+      - run: npm run build:frontend
+      - name: smoke (needs postgres+redis)
+        run: |
+          docker compose -f infra/docker/docker-compose.yml up -d db redis
+          sleep 5
+          npm run prisma:migrate || true
+          npm run dev:backend & sleep 8
+          npm run smoke || true

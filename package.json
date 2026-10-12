@@ -1,0 +1,37 @@
+{
+  "name": "root",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "shared",
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "build:shared": "npm run build --workspace shared",
+    "build:backend": "npm run build --workspace backend",
+    "build:frontend": "npm run build --workspace frontend",
+    "build": "npm run build:shared && npm run build:backend && npm run build:frontend",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "test:backend": "npm run test --workspace backend",
+    "prisma:migrate": "npm run prisma:migrate --workspace backend",
+    "prisma:seed": "npm run prisma:seed --workspace backend",
+    "dev:backend": "npm run dev --workspace backend",
+    "dev:frontend": "npm run dev --workspace frontend",
+    "compose:up": "docker compose -f infra/docker/docker-compose.yml up -d db redis",
+    "compose:full": "docker compose -f infra/docker/docker-compose.yml up -d --build",
+    "smoke": "node scripts/smoke-test.mjs",
+    "probe:resume": "node scripts/resume-probe.mjs",
+    "probe:presence": "node scripts/presence-probe.mjs",
+    "probe:pair": "node scripts/pair-probe.mjs",
+    "postinstall": "node scripts/install-workspace-links.js || exit 0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2"
+  }
+}

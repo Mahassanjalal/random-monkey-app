@@ -1,0 +1,94 @@
+# Buddy full stack: web (nginx SPA), api (NestJS), postgres, redis.
+#
+#   docker compose -f infra/docker/docker-compose.yml up -d --build
+#
+# Then open http://localhost:8080  (web) — API is same-origin via /api proxy.
+#
+# Environment: copy .env.example to .env and adjust secrets before production.
+# JWT_SECRET must be set for real deployments; dev falls back to an insecure default.
+
+services:
+  db:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-buddy}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-buddy}
+      POSTGRES_DB: ${POSTGRES_DB:-buddy}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  api:
+    build:
+      context: ../..
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD-SHELL', 'node -e "fetch(`http://127.0.0.1:3001/health/live`).then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"']
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    environment:
+      NODE_ENV: production
+      PORT: '3001'
+      DATABASE_URL: postgresql://${POSTGRES_USER:-buddy}:${POSTGRES_PASSWORD:-buddy}@db:5432/${POSTGRES_DB:-buddy}?schema=public
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET:-dev-only-insecure-jwt-secret-change-me}
+      JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-900s}
+      JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-30d}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
+      # Optional providers — see .env.example for the full list:
+      # TURN_URL / TURN_USERNAME / TURN_CREDENTIAL, STRIPE_SECRET_KEY, OPENAI_API_KEY, ...
+      TURN_URL: ${TURN_URL:-}
+      TURN_USERNAME: ${TURN_USERNAME:-}
+      TURN_CREDENTIAL: ${TURN_CREDENTIAL:-}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    expose:
+      - '3001'
+
+  web:
+    # Pinned to a widely cached tag; override with WEB_IMAGE if preferred.
+    build:
+      context: ../..
+      dockerfile: frontend/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q -O /dev/null http://127.0.0.1/ || exit 1']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    ports:
+      - '${WEB_PORT:-8080}:80'
+
+volumes:
+  pgdata:
+  redisdata:
