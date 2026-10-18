@@ -55,10 +55,18 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci --no-audit --no-fund
+        run: npm install --no-audit --no-fund
 
       - name: Build shared contracts
         run: npm run build:shared
+
+      - name: Generate Prisma client (Postgres dialect)
+        working-directory: backend
+        run: |
+          sed -i 's/provider = "sqlite"/provider = "postgresql"/' prisma/schema.prisma
+          rm -rf prisma/migrations
+          mv prisma/migrations-postgres prisma/migrations
+          npx prisma generate --schema prisma/schema.prisma
 
       - name: Typecheck all workspaces
         run: npm run typecheck
@@ -71,14 +79,6 @@ jobs:
 
       - name: Build frontend
         run: npm run build:frontend
-
-      - name: Switch Prisma schema to Postgres and switch migrations
-        working-directory: backend
-        run: |
-          sed -i 's/provider = "sqlite"/provider = "postgresql"/' prisma/schema.prisma
-          rm -rf prisma/migrations
-          mv prisma/migrations-postgres prisma/migrations
-          npx prisma generate --schema prisma/schema.prisma
 
       - name: Run database migrations
         working-directory: backend
