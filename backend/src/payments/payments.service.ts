@@ -15,6 +15,15 @@ export interface WebhookResult {
   handled: 'succeeded' | 'failed' | 'ignored';
 }
 
+export interface CreditProduct {
+  key: string;
+  name: string;
+  priceCents: number;
+  currency: string;
+  credits: number;
+  active: boolean;
+}
+
 /**
  * Payment provider abstraction.
  * - STRIPE: real integration when credentials are configured.
@@ -220,5 +229,145 @@ export class PaymentsService {
       data: { userId, provider: 'NONE', planKey: 'premium_monthly', status: 'INACTIVE' },
     });
     return created.id;
+  }
+
+  // ---------- credit products ----------
+
+  async listCreditProducts(): Promise<CreditProduct[]> {
+    const rows = await this.prisma.creditProduct.findMany({
+      where: { active: true },
+      orderBy: { priceCents: 'asc' },
+    });
+    return rows.map((r) => ({
+      key: r.key,
+      name: r.name,
+      priceCents: r.priceCents,
+      currency: r.currency,
+      credits: r.credits,
+      active: r.active,
+    }));
+  }
+
+  async createCreditPurchase(
+    userId: string,
+    productKey: string,
+    idempotencyKey: string,
+  ): Promise<{ url: string; mode: string }> {
+    const cfg = appConfig();
+    const product = await this.prisma.creditProduct.findUnique({
+      where: { key: productKey },
+    });
+    if (!product || !product.active) {
+      throw new NotFoundException('Credit product not found');
+    }
+
+    // Idempotency: if a transaction with this key already succeeded, return its balance.
+    const existing = await this.prisma.paymentTransaction.findUnique({
+      where: { idempotencyKey },
+    });
+    if (existing) {
+      return { url: `/premium?status=already_purchased`, mode: 'IDEMPOTENT' };
+    }
+
+    if (!this.isConfigured()) {
+      // Dev-mode: grant credits immediately without real billing.
+      if (cfg.env !== 'development') {
+        throw new ForbiddenException('Payments are not configured');
+      }
+      const balance = await this.entitlements.applyCredits(
+        userId,
+        product.credits,
+        `CREDIT_PURCHASE_DEV:${productKey}`,
+        idempotencyKey,
+        JSON.stringify({ productKey, devMode: true }),
+      );
+      await this.prisma.paymentTransaction.create({
+        data: {
+          userId,
+          provider: 'DISABLED',
+          externalId: null,
+          idempotencyKey,
+          kind: 'ONE_TIME',
+          amountCents: product.priceCents,
+          currency: 'USD',
+          status: 'SUCCEEDED',
+          completedAt: new Date(),
+          rawEvent: JSON.stringify({ productKey, devMode: true }),
+        },
+      });
+      logger.info({ userId, productKey, credits: product.credits, balance }, 'DEV credit purchase granted');
+      return { url: `/premium?status=success&credits=${product.credits}`, mode: 'DEV_MODE' };
+    }
+
+    // Real Stripe checkout (one-time payment).
+    try {
+      const Stripe = (await import('stripe')).default;
+      const stripe = new Stripe(cfg.stripeSecretKey);
+      const session = await stripe.checkout.sessions.create({
+        mode: 'payment',
+        line_items: [
+          {
+            price_data: {
+              currency: product.currency.toLowerCase(),
+              product_data: { name: product.name },
+              unit_amount: product.priceCents,
+            },
+            quantity: 1,
+          },
+        ],
+        success_url: `${cfg.corsOrigins[0] ?? ''}/premium?status=success&credits=${product.credits}`,
+        cancel_url: `${cfg.corsOrigins[0] ?? ''}/premium?status=cancel`,
+        client_reference_id: userId,
+        metadata: { userId, productKey, credits: String(product.credits), idempotencyKey },
+      });
+      // Record pending transaction.
+      await this.prisma.paymentTransaction.create({
+        data: {
+          userId,
+          provider: 'STRIPE',
+          externalId: session.id,
+          idempotencyKey,
+          kind: 'ONE_TIME',
+          amountCents: product.priceCents,
+          currency: 'USD',
+          status: 'PENDING',
+          rawEvent: JSON.stringify({ productKey, credits: product.credits }),
+        },
+      });
+      return { url: session.url ?? '', mode: 'STRIPE' };
+    } catch (e) {
+      logger.error({ err: String(e) }, 'stripe credit purchase failed');
+      throw new BadRequestException('Payment provider error');
+    }
+  }
+
+  async fulfillCreditPurchase(
+    userId: string,
+    productKey: string,
+    credits: number,
+    idempotencyKey: string,
+  ): Promise<number> {
+    // Idempotent fulfillment: repeated calls return current balance.
+    const existing = await this.prisma.paymentTransaction.findUnique({
+      where: { idempotencyKey },
+    });
+    if (existing && existing.status === 'SUCCEEDED') {
+      return await this.entitlements.creditBalance(userId);
+    }
+    const balance = await this.entitlements.applyCredits(
+      userId,
+      credits,
+      `CREDIT_PURCHASE:${productKey}`,
+      idempotencyKey,
+      JSON.stringify({ productKey }),
+    );
+    if (existing) {
+      await this.prisma.paymentTransaction.update({
+        where: { id: existing.id },
+        data: { status: 'SUCCEEDED', completedAt: new Date() },
+      });
+    }
+    logger.info({ userId, productKey, credits, balance }, 'credit purchase fulfilled');
+    return balance;
   }
 }

@@ -1,13 +1,13 @@
 import { Component, computed, inject } from '@angular/core';
-import { RouterLink, RouterLinkActive, RouterOutlet, Router } from '@angular/router';
+import { RouterLink, RouterLinkActive, Router } from '@angular/router';
 import { AuthService } from './core/auth.service';
 import { ThemeService } from './core/theme.service';
-import { AvatarComponent, ToastsComponent } from './shared/ui';
+import { AvatarComponent, ToastsComponent, AnimatedOutletComponent } from './shared/ui';
 
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [RouterOutlet, RouterLink, RouterLinkActive, AvatarComponent, ToastsComponent],
+  imports: [RouterLink, RouterLinkActive, AvatarComponent, ToastsComponent, AnimatedOutletComponent],
   template: `
     <!-- ambient aurora backdrop -->
     <div class="fixed inset-0 -z-10 overflow-hidden">
@@ -16,7 +16,7 @@ import { AvatarComponent, ToastsComponent } from './shared/ui';
       <div class="aurora-blob h-[300px] w-[300px] bg-accent-mint/10 bottom-0 right-1/4" style="animation-delay: -12s"></div>
     </div>
 
-    <router-outlet />
+    <app-animated-outlet />
 
     <!-- mobile bottom navigation -->
     @if (authed()) {

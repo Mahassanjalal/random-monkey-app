@@ -1,9 +1,9 @@
-import { Body, Controller, Headers, HttpCode, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Headers, HttpCode, Post, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtAuthGuard, type AuthedRequest } from '../auth/jwt.guard';
 import { PaymentsService } from './payments.service';
 import { parseBody } from '../common/zod.pipe';
-import { checkoutSchema } from '@bundle/shared';
+import { checkoutSchema, buyCreditsSchema } from '@bundle/shared';
 
 @Controller('payments')
 export class PaymentsController {
@@ -25,6 +25,19 @@ export class PaymentsController {
   async checkout(@Req() req: AuthedRequest, @Body() body: unknown) {
     const dto = parseBody(checkoutSchema, body);
     return this.payments.createCheckout(req.user!.id, dto.planKey);
+  }
+
+  @Get('credit-products')
+  @UseGuards(JwtAuthGuard)
+  async creditProducts() {
+    return { products: await this.payments.listCreditProducts() };
+  }
+
+  @Post('buy-credits')
+  @UseGuards(JwtAuthGuard)
+  async buyCredits(@Req() req: AuthedRequest, @Body() body: unknown) {
+    const dto = parseBody(buyCreditsSchema, body);
+    return this.payments.createCreditPurchase(req.user!.id, dto.productKey, dto.idempotencyKey);
   }
 
   @Post('dev-activate')

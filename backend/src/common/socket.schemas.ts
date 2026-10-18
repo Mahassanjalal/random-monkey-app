@@ -21,6 +21,13 @@ export const chatSendSchema = z.object({
   kind: z.enum(['text', 'emoji', 'reaction']).optional().default('text'),
 });
 
+export const mediaFrameSchema = z.object({
+  matchId: z.string().min(8).max(64),
+  kind: z.enum(['VIDEO_FRAME', 'AUDIO_SEGMENT', 'SCREENSHOT']).default('VIDEO_FRAME'),
+  // Base64 data URL of the captured frame/segment.
+  dataUrl: z.string().min(10).max(2_000_000),
+});
+
 export function parse<T>(schema: z.ZodSchema<T>, value: unknown): T {
   const r = schema.safeParse(value);
   if (!r.success) {

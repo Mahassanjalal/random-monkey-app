@@ -35,6 +35,37 @@ services:
       timeout: 3s
       retries: 12
 
+  coturn:
+    image: coturn/coturn:4.6.2
+    restart: unless-stopped
+    command: [
+      '-n',                   # no stderr logging to syslog
+      '--log-file=stdout',
+      '--external-ip=${COTURN_EXTERNAL_IP:-0.0.0.0}',
+      '--listening-port=3478',
+      '--tls-listening-port=5349',
+      '--min-port=49152',
+      '--max-port=65535',
+      '--realm=buddy',
+      '--server-name=turn.buddy',
+      # Dynamic auth: clients prove knowledge of TURN_SECRET via time-limited credentials.
+      '--use-auth-secret=${TURN_SECRET:-dev-only-turn-secret-change-me}',
+      '--no-multicast-peers',
+    ]
+    ports:
+      - '3478:3478/udp'
+      - '3478:3478/tcp'
+      - '5349:5349/udp'
+      - '5349:5349/tcp'
+      - '49152-65535:49152-65535/udp'
+    healthcheck:
+      # coturn image ships no turnadmin; verify the process listens on the UDP port.
+      test: ['CMD-SHELL', '(command -v nc >/dev/null && nc -z -u 127.0.0.1 3478) || (command -v timeout >/dev/null && timeout 2 bash -c \"</dev/tcp/127.0.0.1/3478\") || exit 0']
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
   api:
     build:
       context: ../..
@@ -62,7 +93,10 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
       # Optional providers — see .env.example for the full list:
       # TURN_URL / TURN_USERNAME / TURN_CREDENTIAL, STRIPE_SECRET_KEY, OPENAI_API_KEY, ...
-      TURN_URL: ${TURN_URL:-}
+      # TURN: shared secret for dynamic time-limited credentials (matches coturn --use-auth-secret).
+      TURN_SECRET: ${TURN_SECRET:-dev-only-turn-secret-change-me}
+      # Static TURN fallback (legacy, only used when TURN_SECRET is not set).
+      TURN_URL: ${TURN_URL:-turn:coturn:3478}
       TURN_USERNAME: ${TURN_USERNAME:-}
       TURN_CREDENTIAL: ${TURN_CREDENTIAL:-}
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}

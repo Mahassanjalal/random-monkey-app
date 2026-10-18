@@ -7,7 +7,9 @@ import {
   WebSocketServer,
 } from '@nestjs/websockets';
 import type { Server } from 'socket.io';
+import { createAdapter } from '@socket.io/redis-adapter';
 import { verify } from 'jsonwebtoken';
+import Redis from 'ioredis';
 import { appConfig } from '../config/app.config';
 import { RedisService } from '../redis/redis.service';
 import { RealtimeService, type AuthedSocket } from './realtime.service';
@@ -19,6 +21,7 @@ import { logger } from '../common/logger';
 import {
   chatSendSchema,
   matchResumeSchema,
+  mediaFrameSchema,
   parse,
   queueJoinSchema,
   rtcAnswerSchema,
@@ -27,6 +30,7 @@ import {
   rtcStateSchema,
 } from '../common/socket.schemas';
 import type { MatchMode } from '@bundle/shared';
+import { createHmac } from 'crypto';
 
 const SIGNAL_RATE = { windowMs: 2000, max: 60 };
 const CHAT_RATE = { windowMs: 10000, max: 12 };
@@ -51,6 +55,9 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
   @WebSocketServer() server!: Server;
   private readonly log = new Logger(RealtimeGateway.name);
   private rate = new Map<string, RateBucket>();
+  /** Redis pub/sub clients for the Socket.IO adapter (multi-replica scaling). */
+  private pubClient: Redis | null = null;
+  private subClient: Redis | null = null;
 
   constructor(
     private realtime: RealtimeService,
@@ -65,6 +72,23 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
 
   afterInit(server: Server) {
     this.realtime.setServer(server);
+    // Attach the Redis adapter so Socket.IO rooms/events work across multiple API replicas.
+    const cfg = appConfig();
+    if (cfg.redisEnabled && cfg.redisUrl) {
+      try {
+        this.pubClient = new Redis(cfg.redisUrl, {
+          lazyConnect: true,
+          maxRetriesPerRequest: 2,
+        });
+        this.subClient = this.pubClient.duplicate();
+        void this.pubClient.connect();
+        void this.subClient.connect();
+        server.adapter(createAdapter(this.pubClient, this.subClient));
+        logger.info('socket.io redis adapter attached');
+      } catch (e) {
+        logger.warn({ err: String(e) }, 'socket.io redis adapter failed; single-instance only');
+      }
+    }
     // Let the background matcher materialize + notify matches it creates.
     this.matchmaking.onBackgroundPair = async (pair, mode) => {
       await this.notifyMatchFound(pair, mode);
@@ -81,6 +105,8 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     if (this.presenceTimer) clearInterval(this.presenceTimer);
     for (const t of this.resumeTimers.values()) clearTimeout(t);
     this.resumeTimers.clear();
+    void this.pubClient?.quit().catch(() => undefined);
+    void this.subClient?.quit().catch(() => undefined);
   }
 
   private clearResumeTimer(matchId: string) {
@@ -266,6 +292,18 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     return { ok: true };
   }
 
+  /** Haversine distance in km between two lat/lng points. */
+  private haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+    const toRad = (deg: number) => (deg * Math.PI) / 180;
+    const R = 6371;
+    const dLat = toRad(lat2 - lat1);
+    const dLng = toRad(lng2 - lng1);
+    const x =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(x));
+  }
+
   private async notifyMatchFound(
     pair: { a: string; b: string; matchId: string; sharedInterests?: string[] },
     mode: MatchMode,
@@ -274,12 +312,33 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     const shared = pair.sharedInterests ?? [];
     await this.matchmaking.materializeMatch({ matchId, userA: pair.a, userB: pair.b, mode });
     const ice = this.buildIceServers();
+
+    // Load both users' locations to compute distance.
+    const users = await this.matchmaking.getUsersWithLocations([pair.a, pair.b]);
+    const locById = new Map(users.map((u) => [u.id, u.locations]));
+
     for (const [userId, role] of [
       [pair.a, 'caller'],
       [pair.b, 'callee'],
     ] as const) {
       const peerId = userId === pair.a ? pair.b : pair.a;
       const peer = await this.matchmaking.getUserProfileSummary(peerId);
+      const peerLoc = locById.get(peerId);
+      const selfLoc = locById.get(userId);
+      let distanceKm: number | null = null;
+      if (
+        peerLoc?.lat !== null &&
+        peerLoc?.lng !== null &&
+        selfLoc?.lat !== null &&
+        selfLoc?.lng !== null
+      ) {
+        distanceKm = this.haversineKm(
+          selfLoc!.lat,
+          selfLoc!.lng,
+          peerLoc!.lat,
+          peerLoc!.lng,
+        );
+      }
       const peerSummary = {
         userId: peer.userId,
         username: peer.username,
@@ -288,6 +347,8 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
         interests: peer.interests,
         country: peer.country,
         isVerified: peer.isVerified,
+        badges: peer.badges ?? [],
+        distanceKm,
       };
       for (const sid of this.realtime.socketsForUser(userId)) {
         this.realtime.emitToSocket(sid, 'match:found', {
@@ -309,16 +370,41 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     }
   }
 
+  /**
+   * Generate time-limited TURN credentials using the shared TURN_SECRET.
+   * Username = expiry timestamp; password = HMAC-SHA1(secret, username).
+   * coturn validates these via --use-auth-secret.
+   */
+  private generateTurnCredentials(): { username: string; credential: string; ttlSec: number } | null {
+    const cfg = appConfig();
+    if (!cfg.turnSecret) return null;
+    const ttlSec = cfg.turnTtlSec;
+    const username = String(Math.floor(Date.now() / 1000) + ttlSec);
+    const credential = createHmac('sha1', cfg.turnSecret).update(username).digest('base64');
+    return { username, credential, ttlSec };
+  }
+
   private buildIceServers() {
     const cfg = appConfig();
     const servers: { urls: string[]; username?: string; credential?: string }[] = [];
     if (cfg.iceServers.length) servers.push({ urls: cfg.iceServers });
+
+    // Prefer dynamic credentials when TURN_SECRET is configured; fall back to static.
+    const dynamic = this.generateTurnCredentials();
     if (cfg.turnUrl) {
-      servers.push({
-        urls: [cfg.turnUrl],
-        username: cfg.turnUsername || undefined,
-        credential: cfg.turnCredential || undefined,
-      });
+      if (dynamic) {
+        servers.push({
+          urls: [cfg.turnUrl],
+          username: dynamic.username,
+          credential: dynamic.credential,
+        });
+      } else if (cfg.turnUsername || cfg.turnCredential) {
+        servers.push({
+          urls: [cfg.turnUrl],
+          username: cfg.turnUsername || undefined,
+          credential: cfg.turnCredential || undefined,
+        });
+      }
     }
     return servers;
   }
@@ -514,6 +600,35 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
       await this.reports.blockUser(client.userId!, p.reportedUserId);
       cb?.({ ok: true });
       return { ok: true };
+    } catch (e) {
+      return cb?.({ ok: false, error: String(e) });
+    }
+  }
+
+  @SubscribeMessage('media:frame')
+  async onMediaFrame(client: AuthedSocket, dto: unknown, ...ackArgs: unknown[]) {
+    const cb = ackOf(ackArgs);
+    try {
+      const p = parse(mediaFrameSchema, dto);
+      if (!client.userId || !this.assertMatchMember(client, p.matchId)) {
+        return cb?.({ ok: false, error: 'Not in match' });
+      }
+      const verdict = await this.moderation.checkMedia(
+        p.matchId,
+        client.userId,
+        p.kind as import('@bundle/shared').MediaModerationKind,
+        p.dataUrl,
+      );
+      if (verdict.blocked) {
+        // Warn only the sender; the peer continues unaffected unless they also send flagged media.
+        client.emit('media:warning', {
+          matchId: p.matchId,
+          blocked: true,
+          reason: verdict.flaggedLabels.join(', ') || 'Media flagged',
+        });
+      }
+      cb?.({ ok: true, blocked: verdict.blocked, labels: verdict.flaggedLabels });
+      return { ok: true, blocked: verdict.blocked };
     } catch (e) {
       return cb?.({ ok: false, error: String(e) });
     }

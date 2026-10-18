@@ -3,9 +3,14 @@ import { Router } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 import { ApiService } from '../../core/api.service';
 import { ToastService } from '../../core/toast.service';
+import type { CreditProductDto } from '@bundle/shared';
 
 const FEATURES_FREE = ['Random video & text matching', 'Preference matching (everyone / women / men)', 'Skip, block & report — always', 'Safety center & controls', 'Friends & profile'];
 const FEATURES_PREMIUM = ['Pick verified people only', 'Language & country filters', 'Extended interest matching', 'Priority queue placement', 'Premium badge on profile', 'Priority support'];
+
+function newIdempotencyKey() {
+  return `${crypto.randomUUID().replace(/-/g, '')}-${Date.now()}`;
+}
 
 @Component({
   selector: 'app-premium-page',
@@ -101,6 +106,24 @@ const FEATURES_PREMIUM = ['Pick verified people only', 'Language & country filte
         }
       }
 
+      <!-- credit packs -->
+      @if (creditProducts().length > 0) {
+        <section class="animate-fade-up mt-4 space-y-2" style="animation-delay: 140ms">
+          <h3 class="font-display text-[13px] font-bold text-ink-50/75">Credit packs</h3>
+          <div class="grid grid-cols-2 gap-3">
+            @for (p of creditProducts(); track p.key) {
+              <button (click)="buyCredits(p)" [disabled]="busy()"
+                class="glass-card flex flex-col items-center justify-between p-4 text-center transition-all duration-300 hover:border-brand-400/50 hover:bg-brand-500/[0.08] active:scale-[0.99]">
+                <div class="text-[11px] font-bold text-ink-50/60 mb-1">{{ p.name }}</div>
+                <div class="font-display text-lg font-extrabold text-brand-300 mb-1">{{ cents(p.priceCents, p.currency) }}</div>
+                <div class="text-[10px] text-ink-50/45 mb-3">{{ p.credits }} credits</div>
+                <span class="text-[10px] text-mint-400 font-bold">+{{ p.credits }}</span>
+              </button>
+            }
+          </div>
+        </section>
+      }
+
       <p class="animate-fade-up mt-6 text-center text-[11px] text-ink-50/35" style="animation-delay: 200ms">
         Cancel anytime in settings. Payments processed securely by our provider.<br />Essential safety tools are always free.
       </p>
@@ -116,6 +139,7 @@ export class PremiumPage implements OnInit {
   plans = signal<{ key: string; priceCents: number; currency: string; interval: string }[]>([]);
   configured = signal(false);
   activeUntil = signal('');
+  creditProducts = signal<CreditProductDto[]>([]);
   busy = signal(false);
 
   featuresFree = FEATURES_FREE;
@@ -127,11 +151,16 @@ export class PremiumPage implements OnInit {
 
   async ngOnInit() {
     try {
-      const [ent, pl] = await Promise.all([firstValueFrom(this.api.entitlements()), firstValueFrom(this.api.plans())]);
+      const [ent, pl, cp] = await Promise.all([
+        firstValueFrom(this.api.entitlements()),
+        firstValueFrom(this.api.plans()),
+        firstValueFrom(this.api.creditProducts()),
+      ]);
       this.tier.set(ent?.tier ?? 'FREE');
       this.activeUntil.set(ent?.activeUntil ? new Date(ent.activeUntil).toLocaleDateString() : '');
       this.plans.set((pl?.plans ?? []) as never[]);
       this.configured.set(!!pl?.configured);
+      this.creditProducts.set(cp?.products ?? []);
       const params = new URLSearchParams(window.location.search);
       const status = params.get('status');
       if (status === 'success') this.toast.success('Payment successful — premium activating…');
@@ -170,6 +199,25 @@ export class PremiumPage implements OnInit {
       await this.ngOnInit();
     } catch {
       this.toast.error('Activation failed');
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
+  async buyCredits(product: CreditProductDto) {
+    this.busy.set(true);
+    try {
+      const r = await firstValueFrom(this.api.buyCredits(product.key, newIdempotencyKey()));
+      if (r?.mode === 'DEV_MODE' || r?.mode === 'IDEMPOTENT') {
+        this.toast.success(`Credits added: +${product.credits}`);
+        await this.ngOnInit();
+      } else if (r?.url) {
+        window.location.href = r.url;
+      } else {
+        this.toast.error('Purchase unavailable right now');
+      }
+    } catch {
+      this.toast.error('Purchase failed');
     } finally {
       this.busy.set(false);
     }

@@ -22,6 +22,7 @@ import { ModerationModule } from './moderation/moderation.module';
 import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 import { PaymentsModule } from './payments/payments.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { VerificationsModule } from './verifications/verifications.module';
 import { AdminModule } from './admin/admin.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { RealtimeModule } from './realtime/realtime.module';
@@ -53,6 +54,7 @@ import { ZodValidationPipe } from './common/zod.pipe';
     SubscriptionsModule,
     PaymentsModule,
     NotificationsModule,
+    VerificationsModule,
     AdminModule,
     AnalyticsModule,
     RealtimeModule,

@@ -141,6 +141,9 @@ export enum NotificationKind {
   MODERATION_ACTION = 'MODERATION_ACTION',
   SUBSCRIPTION = 'SUBSCRIPTION',
   SYSTEM = 'SYSTEM',
+  VERIFICATION_APPROVED = 'VERIFICATION_APPROVED',
+  VERIFICATION_REJECTED = 'VERIFICATION_REJECTED',
+  SUBSCRIPTION_EXPIRING = 'SUBSCRIPTION_EXPIRING',
 }
 
 export enum FriendRequestStatus {
@@ -153,6 +156,31 @@ export enum OnlineVisibility {
   EVERYONE = 'EVERYONE',
   FRIENDS = 'FRIENDS',
   NOBODY = 'NOBODY',
+}
+
+export enum VerificationStatus {
+  PENDING = 'PENDING',
+  APPROVED = 'APPROVED',
+  REJECTED = 'REJECTED',
+  EXPIRED = 'EXPIRED',
+}
+
+export enum VerificationProvider {
+  MANUAL = 'MANUAL',
+  SELFIE = 'SELFIE',
+  ID_DOCUMENT = 'ID_DOCUMENT',
+}
+
+export enum VerificationBadgeKind {
+  PHOTO = 'photo',
+  ID = 'id',
+  AGE = 'age',
+}
+
+export enum MediaModerationKind {
+  VIDEO_FRAME = 'VIDEO_FRAME',
+  AUDIO_SEGMENT = 'AUDIO_SEGMENT',
+  SCREENSHOT = 'SCREENSHOT',
 }
 
 export enum MatchType {

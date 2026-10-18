@@ -4,14 +4,15 @@ import { FormsModule } from '@angular/forms';
 import { RealtimeService, type IncomingChat } from '../../core/realtime.service';
 import { AuthService } from '../../core/auth.service';
 import { ToastService } from '../../core/toast.service';
-import { AvatarComponent, RatingSheetComponent } from '../../shared/ui';
+import { AvatarComponent, RatingSheetComponent, SearchingRadarComponent, MatchCelebrationComponent } from '../../shared/ui';
 
 @Component({
   selector: 'app-video-page',
   standalone: true,
-  imports: [FormsModule, AvatarComponent, RatingSheetComponent],
+  imports: [FormsModule, AvatarComponent, RatingSheetComponent, SearchingRadarComponent, MatchCelebrationComponent],
   template: `
     <div class="relative mx-auto h-dvh w-full max-w-lg overflow-hidden bg-black">
+      <app-match-celebration [burst]="celebrating()" />
       <!-- REMOTE VIDEO -->
       <video
         #remoteVideo
@@ -52,9 +53,8 @@ import { AvatarComponent, RatingSheetComponent } from '../../shared/ui';
       <!-- SEARCHING stage -->
       @if (phase() === 'waiting') {
         <div class="absolute inset-0 flex flex-col items-center justify-center bg-ink-900/98 px-6 text-center">
-          <div class="relative mb-6">
-            <div class="absolute -inset-4 animate-pulse-ring rounded-full bg-brand-500/40"></div>
-            <div class="grid h-24 w-24 animate-pulse place-items-center rounded-full bg-gradient-to-br from-brand-500 to-fuchsia-500 text-4xl">🔍</div>
+          <div class="mb-6">
+            <app-searching-radar [size]="180" [core]="64" [emoji]="'🔍'"></app-searching-radar>
           </div>
           <h2 class="animate-fade-up font-display text-xl font-bold">Finding someone…</h2>
           <p class="mt-2 animate-fade-up text-sm text-ink-50/50" style="animation-delay: 100ms">
@@ -79,6 +79,13 @@ import { AvatarComponent, RatingSheetComponent } from '../../shared/ui';
               <app-avatar [name]="peerName()" [hue]="peerHue()" [size]="40" [verified]="peerVerified()" />
               <div>
                 <div class="font-display text-sm font-bold">{{ peerName() }}</div>
+                @if (peerBadges().length) {
+                  <div class="mt-0.5 flex flex-wrap gap-1">
+                    @for (b of peerBadges(); track b.kind) {
+                      <span class="rounded-full bg-brand-500/25 px-2 py-0.5 text-[10px] font-medium text-brand-100">✓ {{ b.kind }}</span>
+                    }
+                  </div>
+                }
                 <div class="flex items-center gap-1.5 text-[11px]" [class]="connectedLabel()==='connected' ? 'text-mint' : 'text-amber-300'">
                   <span class="h-1.5 w-1.5 rounded-full" [class]="connectedLabel()==='connected' ? 'bg-mint animate-pulse' : 'bg-amber-300 animate-ping'"></span>
                   {{ connectedLabel() === 'connected' ? 'Connected' : 'Connecting…' }}
@@ -89,6 +96,9 @@ import { AvatarComponent, RatingSheetComponent } from '../../shared/ui';
                       <span class="rounded-full bg-brand-500/25 px-2 py-0.5 text-[10px] font-medium text-brand-100">❤ {{ t }}</span>
                     }
                   </div>
+                }
+                @if (peerDistance() !== null) {
+                  <div class="mt-1 text-[10px] text-ink-50/45">{{ peerDistance().toFixed(0) }} km away</div>
                 }
               </div>
             </div>
@@ -108,6 +118,12 @@ import { AvatarComponent, RatingSheetComponent } from '../../shared/ui';
         } @else if (remoteState() === 'disconnected') {
           <div class="absolute inset-x-0 top-20 z-20 mx-auto w-fit animate-pop-in rounded-full bg-amber-500/90 px-4 py-1.5 text-xs font-semibold text-black shadow-xl">
             Reconnecting…
+          </div>
+        }
+
+        @if (mediaWarning()?.blocked) {
+          <div class="absolute inset-x-0 top-28 z-20 mx-auto w-fit animate-pop-in rounded-full bg-red-500/95 px-4 py-1.5 text-xs font-semibold text-white shadow-xl">
+            ⚠️ {{ mediaWarning()?.reason }}
           </div>
         }
 
@@ -148,6 +164,7 @@ import { AvatarComponent, RatingSheetComponent } from '../../shared/ui';
             <button (click)="switchCam()" class="chip hover:bg-ink-50/15 transition-colors">🔄 Flip</button>
             <button (click)="blockFlow()" class="chip hover:bg-red-500/20 text-red-300 transition-colors">🚫 Block</button>
             <button (click)="reportFlow()" class="chip hover:bg-ink-50/15 transition-colors">🚩 Report</button>
+            <button (click)="reportMedia()" class="chip hover:bg-ink-50/15 transition-colors">📷 Media</button>
             <button (click)="end()" class="chip hover:bg-ink-50/15 transition-colors">⏹ End</button>
           </div>
         </div>
@@ -218,6 +235,7 @@ export class VideoPage implements OnInit, OnDestroy {
   remoteState = this.rt.remoteState;
   peerReconnecting = this.rt.peerReconnecting;
   match = this.rt.matchInfo;
+  mediaWarning = this.rt.mediaWarning;
 
   micOn = signal(true);
   camOn = signal(true);
@@ -235,12 +253,16 @@ export class VideoPage implements OnInit, OnDestroy {
   peerName = computed(() => this.match()?.peer?.displayName || this.match()?.peer?.username || 'New friend');
   peerHue = computed(() => this.match()?.peer?.avatarHue ?? 210);
   peerVerified = computed(() => !!this.match()?.peer?.isVerified);
+  peerBadges = computed(() => this.match()?.peer?.badges ?? []);
   sharedInterests = computed(() => this.match()?.sharedInterests ?? []);
+  peerDistance = computed(() => this.match()?.peer?.distanceKm ?? null);
 
   showRating = signal(false);
   lastMatchId = signal('');
   lastPeerName = signal('');
+  celebrating = signal(false);
   private ratedMatchIds = new Set<string>();
+  private lastPhase = '';
 
   constructor() {
     effect(() => {
@@ -253,6 +275,12 @@ export class VideoPage implements OnInit, OnDestroy {
       if (this.phase() === 'peer-left' && m && !this.ratedMatchIds.has(m.matchId)) {
         this.showRating.set(true);
       }
+      // celebrate each new match
+      const p = this.phase();
+      if ((p === 'matched' || p === 'in-call') && this.lastPhase !== 'matched' && this.lastPhase !== 'in-call') {
+        this.celebrating.set(true);
+      }
+      this.lastPhase = p;
     });
   }
 
@@ -291,6 +319,11 @@ export class VideoPage implements OnInit, OnDestroy {
   async ngOnInit() {
     this.myId.set(this.auth.user()?.id ?? '');
     this.rt.on('chat:message', this.onChatMessage);
+    this.rt.on('media:warning', (p: { blocked: boolean; reason: string }) => {
+      this.zone.run(() => {
+        this.rt.mediaWarning.set({ blocked: p.blocked, reason: p.reason });
+      });
+    });
 
     // poll remote stream signal (Angular signals have no .subscribe in stable API)
     const check = setInterval(() => {
@@ -446,6 +479,38 @@ export class VideoPage implements OnInit, OnDestroy {
       this.toast.success('Report sent. Our team will review. Skip or block anytime from the call bar.');
     } else {
       this.toast.error('Report failed — try again.');
+    }
+  }
+
+  async reportMedia() {
+    const stream = this.rt.localStreamView;
+    if (!stream) {
+      this.toast.error('No local media to capture');
+      return;
+    }
+    const track = stream.getVideoTracks()[0];
+    if (!track) {
+      this.toast.error('No camera track available');
+      return;
+    }
+    try {
+      // Capture a frame from the local video.
+      const canvas = document.createElement('canvas');
+      const settings = track.getSettings();
+      canvas.width = settings.width ?? 640;
+      canvas.height = settings.height ?? 480;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('No canvas context');
+      ctx.drawImage(this.pipVideo()?.nativeElement ?? this.previewVideo()?.nativeElement ?? new Image(), 0, 0);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+      const r = await this.rt.sendMediaFrame(this.match()!.matchId, 'VIDEO_FRAME', dataUrl);
+      if (r.blocked) {
+        this.toast.error('Media flagged by moderation: ' + (r.labels.join(', ') || 'unknown'));
+      } else {
+        this.toast.info('Media frame sent (no issues detected)');
+      }
+    } catch {
+      this.toast.error('Could not capture media frame');
     }
   }
 

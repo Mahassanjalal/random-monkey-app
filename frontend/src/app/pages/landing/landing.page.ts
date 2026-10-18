@@ -24,13 +24,32 @@ import { AuthService } from '../../core/auth.service';
         <div class="animate-pop-in relative mx-auto mb-8">
           <div class="absolute inset-0 animate-pulse-ring rounded-full bg-brand-500/40"></div>
           <div class="absolute inset-0 rounded-full bg-gradient-to-br from-brand-500/60 to-fuchsia-500/40 blur-2xl"></div>
-          <img
-            src="hero-orb.svg"
-            alt=""
-            class="relative mx-auto h-44 w-44 animate-float select-none"
-            draggable="false"
-            aria-hidden="true"
-          />
+          <div class="animate-float relative mx-auto h-44 w-44 select-none" aria-hidden="true">
+            <svg viewBox="0 0 200 200" class="h-full w-full" fill="none">
+              <defs>
+                <radialGradient id="orb" cx="35%" cy="30%" r="80%">
+                  <stop offset="0%" stop-color="#b9a8ff"/>
+                  <stop offset="45%" stop-color="#7c4dff"/>
+                  <stop offset="100%" stop-color="#3b1b8f"/>
+                </radialGradient>
+                <linearGradient id="glow" x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0%" stop-color="#ff9ae8" stop-opacity="0.9"/>
+                  <stop offset="100%" stop-color="#3ddc97" stop-opacity="0.7"/>
+                </linearGradient>
+              </defs>
+              <!-- rotating dashed halo -->
+              <circle cx="100" cy="100" r="86" stroke="url(#glow)" stroke-width="2.5" stroke-dasharray="10 14"
+                opacity="0.8" class="animate-spin-slow" style="transform-box: view-box; transform-origin: 100px 100px"/>
+              <circle cx="100" cy="100" r="64" fill="url(#orb)"/>
+              <circle cx="78" cy="86" r="9" fill="#fff" opacity="0.95"/>
+              <circle cx="122" cy="86" r="9" fill="#fff" opacity="0.95"/>
+              <circle cx="80" cy="88" r="4" fill="#1d1246"/>
+              <circle cx="124" cy="88" r="4" fill="#1d1246"/>
+              <path d="M76 116 Q100 140 124 116" stroke="#1d1246" stroke-width="6" stroke-linecap="round" fill="none"/>
+              <circle cx="146" cy="56" r="7" fill="#3ddc97" class="animate-pulse"/>
+              <circle cx="52" cy="140" r="5" fill="#ff6b6b" class="animate-pulse" style="animation-delay: 900ms"/>
+            </svg>
+          </div>
         </div>
 
         <h1 class="animate-fade-up font-display text-[2.6rem] font-extrabold leading-[1.05] tracking-tight" style="animation-delay: 80ms">

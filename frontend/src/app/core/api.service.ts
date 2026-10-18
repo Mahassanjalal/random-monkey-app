@@ -1,13 +1,19 @@
 import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import type {
+  BadgeDto,
+  BuyCreditsDto,
+  CreditProductDto,
   EntitlementsDto,
+  GeoLocationDto,
   KarmaDto,
   PlanInfo,
   PreferencesDto,
   ProfileDto,
   UpdatePreferencesDto,
   UpdateProfileDto,
+  UpdateGeoDto,
+  VerificationDto,
 } from '@bundle/shared';
 
 export interface MePayload {
@@ -123,5 +129,35 @@ export class ApiService {
 
   myKarma() {
     return this.http.get<KarmaDto>('/api/ratings/karma/me');
+  }
+
+  // ---------- credit products ----------
+  creditProducts() {
+    return this.http.get<{ products: CreditProductDto[] }>('/api/payments/credit-products');
+  }
+
+  buyCredits(productKey: string, idempotencyKey: string) {
+    return this.http.post<{ url: string; mode: string }>('/api/payments/buy-credits', {
+      productKey,
+      idempotencyKey,
+    });
+  }
+
+  // ---------- geo / advanced filters ----------
+  getGeo() {
+    return this.http.get<GeoLocationDto>('/api/profiles/geo');
+  }
+
+  updateGeo(dto: UpdateGeoDto) {
+    return this.http.post<{ ok: true }>('/api/profiles/geo', dto);
+  }
+
+  // ---------- identity verification ----------
+  submitVerification(provider: string, selfieUrl?: string, idDocUrl?: string) {
+    return this.http.post<VerificationDto>('/api/verifications/submit', { provider, selfieUrl, idDocUrl });
+  }
+
+  myVerification() {
+    return this.http.get<{ status: string | null; provider: string | null; badge: BadgeDto | null }>('/api/verifications/me');
   }
 }

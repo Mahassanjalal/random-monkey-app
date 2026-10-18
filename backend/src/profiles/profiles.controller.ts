@@ -2,7 +2,7 @@ import { BadRequestException, Body, Controller, ForbiddenException, Get, Post, R
 import { JwtAuthGuard, type AuthedRequest } from '../auth/jwt.guard';
 import { PrismaService } from '../prisma/prisma.service';
 import { parseBody } from '../common/zod.pipe';
-import { updatePreferencesSchema, updateProfileSchema } from '@bundle/shared';
+import { updatePreferencesSchema, updateProfileSchema, updateGeoSchema } from '@bundle/shared';
 
 @Controller('profiles')
 @UseGuards(JwtAuthGuard)
@@ -85,6 +85,71 @@ export class ProfilesController {
       },
       update: data,
     });
+    return { ok: true };
+  }
+
+  @Get('geo')
+  async getGeo(@Req() req: AuthedRequest) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: req.user!.id },
+      include: { preferences: true, locations: true },
+    });
+    if (!user) throw new BadRequestException('Not found');
+    const loc = user.locations;
+    return {
+      country: loc?.country ?? null,
+      city: loc?.city ?? null,
+      lat: loc?.lat ?? null,
+      lng: loc?.lng ?? null,
+      radiusKm: loc?.radiusKm ?? 50,
+      geoEnabled: user.preferences?.geoEnabled ?? false,
+      minAge: user.preferences?.minAge ?? 18,
+      maxAge: user.preferences?.maxAge ?? 99,
+    };
+  }
+
+  @Post('geo')
+  async updateGeo(@Req() req: AuthedRequest, @Body() body: unknown) {
+    const dto = parseBody(updateGeoSchema, body);
+    const userId = req.user!.id;
+
+    // Upsert preferences geo fields.
+    const prefData: Record<string, unknown> = {};
+    if (dto.geoEnabled !== undefined) prefData.geoEnabled = dto.geoEnabled;
+    if (dto.minAge !== undefined) prefData.minAge = dto.minAge;
+    if (dto.maxAge !== undefined) prefData.maxAge = dto.maxAge;
+    if (Object.keys(prefData).length > 0) {
+      await this.prisma.userPreference.upsert({
+        where: { userId },
+        create: { userId, seeking: 'EVERYONE', ...prefData },
+        update: prefData,
+      });
+    }
+
+    // Upsert location if lat/lng/country/city provided.
+    if (dto.lat !== undefined || dto.lng !== undefined || dto.country !== undefined || dto.city !== undefined) {
+      await this.prisma.userLocation.upsert({
+        where: { userId },
+        create: {
+          userId,
+          country: dto.country ?? '',
+          region: dto.region ?? null,
+          city: dto.city ?? null,
+          lat: dto.lat ?? 0,
+          lng: dto.lng ?? 0,
+          radiusKm: dto.radiusKm ?? 50,
+        },
+        update: {
+          ...(dto.country !== undefined ? { country: dto.country } : {}),
+          ...(dto.region !== undefined ? { region: dto.region } : {}),
+          ...(dto.city !== undefined ? { city: dto.city } : {}),
+          ...(dto.lat !== undefined ? { lat: dto.lat } : {}),
+          ...(dto.lng !== undefined ? { lng: dto.lng } : {}),
+          ...(dto.radiusKm !== undefined ? { radiusKm: dto.radiusKm } : {}),
+        },
+      });
+    }
+
     return { ok: true };
   }
 }

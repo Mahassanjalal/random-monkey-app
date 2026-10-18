@@ -10,6 +10,7 @@ import {
   MatchMode,
   MatchStatus,
   MatchType,
+  MediaModerationKind,
   ModerationActionType,
   ModerationCaseStatus,
   NotificationKind,
@@ -22,6 +23,9 @@ import {
   SeekingPreference,
   SubscriptionStatus,
   UserReportStatus,
+  VerificationBadgeKind,
+  VerificationProvider,
+  VerificationStatus,
 } from './enums.js';
 
 // ---------- shared primitives ----------
@@ -171,6 +175,8 @@ export interface MatchFoundPayload {
     interests: string[];
     country: string | null;
     isVerified: boolean;
+    badges: BadgeDto[];
+    distanceKm: number | null;
   };
   /** Interests both users share (empty when matched by time only). */
   sharedInterests: string[];
@@ -319,6 +325,8 @@ export interface EntitlementsDto {
     countryFilter: boolean;
     extendedInterests: boolean;
     priorityQueue: boolean;
+    geoFilter: boolean;
+    verificationBadge: boolean;
   };
 }
 
@@ -328,6 +336,79 @@ export interface PlanInfo {
   currency: string;
   interval: 'month' | 'year';
   provider: PaymentProviderKind;
+}
+
+// ---------- geo / advanced filters ----------
+export const updateGeoSchema = z.object({
+  country: z.string().regex(/^[A-Za-z]{2}$/).optional(),
+  region: z.string().max(64).optional(),
+  city: z.string().max(64).optional(),
+  lat: z.number().min(-90).max(90).optional(),
+  lng: z.number().min(-180).max(180).optional(),
+  radiusKm: z.number().int().min(1).max(500).optional(),
+  geoEnabled: z.boolean().optional(),
+  minAge: z.number().int().min(18).max(100).optional(),
+  maxAge: z.number().int().min(18).max(100).optional(),
+});
+export type UpdateGeoDto = z.infer<typeof updateGeoSchema>;
+
+export interface GeoLocationDto {
+  country: string | null;
+  city: string | null;
+  lat: number | null;
+  lng: number | null;
+  radiusKm: number;
+  geoEnabled: boolean;
+  minAge: number;
+  maxAge: number;
+}
+
+// ---------- identity verification ----------
+export const submitVerificationSchema = z.object({
+  provider: z.nativeEnum(VerificationProvider),
+  selfieUrl: z.string().url().optional(),
+  idDocUrl: z.string().url().optional(),
+});
+export type SubmitVerificationDto = z.infer<typeof submitVerificationSchema>;
+
+export interface VerificationDto {
+  id: string;
+  status: VerificationStatus;
+  provider: VerificationProvider;
+  selfieUrl: string | null;
+  idDocUrl: string | null;
+  checkedAt: string | null;
+  createdAt: string;
+}
+
+export interface BadgeDto {
+  kind: VerificationBadgeKind;
+  issuedAt: string;
+}
+
+export interface UserWithBadgesDto {
+  userId: string;
+  username: string;
+  displayName: string;
+  avatarHue: number;
+  isVerified: boolean;
+  badges: BadgeDto[];
+}
+
+// ---------- credit products ----------
+export const buyCreditsSchema = z.object({
+  productKey: z.string().min(1).max(64),
+  idempotencyKey: z.string().min(20).max(128),
+});
+export type BuyCreditsDto = z.infer<typeof buyCreditsSchema>;
+
+export interface CreditProductDto {
+  key: string;
+  name: string;
+  priceCents: number;
+  currency: string;
+  credits: number;
+  active: boolean;
 }
 
 // ---------- admin ----------

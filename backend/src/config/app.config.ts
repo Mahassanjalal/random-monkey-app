@@ -26,6 +26,9 @@ export const appConfig = registerAs('app', () => ({
   turnUrl: process.env.TURN_URL ?? '',
   turnUsername: process.env.TURN_USERNAME ?? '',
   turnCredential: process.env.TURN_CREDENTIAL ?? '',
+  turnSecret: process.env.TURN_SECRET ?? '',
+  // TURN credentials are time-limited: valid for TURN_TTL_SEC seconds from issuance.
+  turnTtlSec: intEnv('TURN_TTL_SEC', 86400),
   redisUrl: process.env.REDIS_URL ?? 'redis://localhost:6379',
   redisEnabled: (process.env.REDIS_ENABLED ?? 'true') === 'true',
   // Age assurance: none | provider-name (documented in docs/age-assurance.md)

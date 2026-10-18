@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { appConfig } from '../config/app.config';
 import { logger } from '../common/logger';
+import { MediaModerationKind } from '@bundle/shared';
 
 export interface CreateCaseInput {
   subjectUserId: string;
@@ -12,6 +13,14 @@ export interface CreateCaseInput {
 }
 
 export interface TextVerdict {
+  blocked: boolean;
+  flaggedLabels: string[];
+  scores: Record<string, number>;
+  confidence: number;
+  provider: string;
+}
+
+export interface MediaVerdict {
   blocked: boolean;
   flaggedLabels: string[];
   scores: Record<string, number>;
@@ -115,6 +124,104 @@ export class ModerationService {
       confidence: r ? Math.max(0, ...Object.values(r.category_scores ?? {})) : 0,
       provider: 'openai',
     };
+  }
+
+  /**
+   * Media moderation for a frame/segment captured during a call.
+   * Fail-open when provider is unconfigured: records a verdict but does not block.
+   * If blocked, creates a ModerationCase with source AI_VIDEO for human review.
+   */
+  async checkMedia(
+    matchId: string,
+    userId: string,
+    kind: MediaModerationKind,
+    imageDataUrl: string,
+  ): Promise<MediaVerdict> {
+    const cfg = appConfig();
+    const provider = cfg.moderationProvider;
+    let verdict: MediaVerdict = {
+      blocked: false,
+      flaggedLabels: [],
+      scores: {},
+      confidence: 0,
+      provider: 'none',
+    };
+
+    if (provider !== 'none' && cfg.moderationApiKey) {
+      try {
+        // Re-use the text moderation provider endpoint by sending the image as a base64 data URL.
+        // Providers that support vision (e.g. OpenAI omni-moderation) can analyze it.
+        const res = await fetch('https://api.openai.com/v1/moderations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.moderationApiKey}` },
+          body: JSON.stringify({ model: 'omni-moderation-latest', input: imageDataUrl }),
+          signal: AbortSignal.timeout(5000),
+        });
+        if (res.ok) {
+          const json = (await res.json()) as {
+            results: {
+              flagged: boolean;
+              categories: Record<string, boolean>;
+              category_scores: Record<string, number>;
+            }[];
+          };
+          const r = json.results?.[0];
+          const flaggedLabels = r
+            ? Object.entries(r.categories)
+                .filter(([, v]) => v)
+                .map(([k]) => k)
+            : [];
+          const hardBlock = flaggedLabels.some((l) =>
+            ['sexual/minors', 'violence/graphic', 'self-harm/instructions'].includes(l),
+          );
+          verdict = {
+            blocked: hardBlock,
+            flaggedLabels,
+            scores: r?.category_scores ?? {},
+            confidence: r ? Math.max(0, ...Object.values(r.category_scores ?? { 0: 0 })) : 0,
+            provider: 'openai',
+          };
+        } else {
+          verdict.provider = `${provider}:error`;
+        }
+      } catch (e) {
+        logger.warn({ err: String(e), provider }, 'media moderation provider error; failing open');
+        verdict.provider = `${provider}:error`;
+      }
+    }
+
+    // Always record the verdict.
+    await this.prisma.mediaModerationVerdict.create({
+      data: {
+        matchId,
+        userId,
+        kind: String(kind),
+        provider: verdict.provider,
+        blocked: verdict.blocked,
+        flaggedLabels: JSON.stringify(verdict.flaggedLabels),
+        scoresJson: JSON.stringify(verdict.scores),
+        confidence: verdict.confidence,
+      },
+    }).catch((e) => logger.warn({ err: String(e) }, 'failed to record media verdict'));
+
+    if (verdict.blocked) {
+      await this.createCase({
+        subjectUserId: userId,
+        source: 'AI_VIDEO',
+        reason: verdict.flaggedLabels.join(', ') || 'MEDIA_FLAGGED',
+        severity: 'HIGH',
+      }).catch(() => undefined);
+    }
+
+    return verdict;
+  }
+
+  async getMediaVerdicts(matchId: string) {
+    return this.prisma.mediaModerationVerdict.findMany({
+      where: { matchId },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
   }
 
   async applyAction(

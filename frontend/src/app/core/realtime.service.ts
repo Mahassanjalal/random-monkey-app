@@ -44,6 +44,8 @@ export class RealtimeService {
   readonly errorMessage = signal<string | null>(null);
   /** True while the server tells us the peer dropped and may come back. */
   readonly peerReconnecting = signal(false);
+  /** Set when the server flags media from this user during a call. */
+  readonly mediaWarning = signal<{ blocked: boolean; reason: string } | null>(null);
 
   /** Public read access to the local camera stream (for PiP self-view). */
   get localStreamView(): MediaStream | null {
@@ -141,6 +143,11 @@ export class RealtimeService {
       });
       this.socket.on('moderation:warning', (p: { message: string }) => {
         this.errorMessage.set(p.message);
+      });
+      this.socket.on('media:warning', (p: { matchId: string; blocked: boolean; reason: string }) => {
+        if (p.matchId === this.currentMatchId) {
+          this.mediaWarning.set({ blocked: p.blocked, reason: p.reason });
+        }
       });
       this.socket.on('error', (p: { message: string }) => {
         this.errorMessage.set(p.message);
@@ -354,6 +361,17 @@ export class RealtimeService {
     });
   }
 
+  /** Send a captured media frame for moderation during an active match. */
+  sendMediaFrame(matchId: string, kind: 'VIDEO_FRAME' | 'AUDIO_SEGMENT' | 'SCREENSHOT', dataUrl: string): Promise<{ ok: boolean; blocked: boolean; labels: string[] }> {
+    return new Promise((resolve) => {
+      this.socket?.emit(
+        'media:frame',
+        { matchId, kind, dataUrl },
+        (r: { ok: boolean; blocked: boolean; labels: string[] }) => resolve(r),
+      );
+    });
+  }
+
   toggleMic(enabled: boolean) {
     this.localStream?.getAudioTracks().forEach((t) => (t.enabled = enabled));
   }
@@ -414,4 +432,5 @@ export class RealtimeService {
 interface SocketEventMap {
   'chat:message': (msg: IncomingChat) => void;
   'chat:typing': (p: { matchId: string; typing: boolean }) => void;
+  'media:warning': (p: { matchId: string; blocked: boolean; reason: string }) => void;
 }

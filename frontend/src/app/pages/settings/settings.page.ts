@@ -6,6 +6,7 @@ import { ApiService } from '../../core/api.service';
 import { AuthService } from '../../core/auth.service';
 import { ToastService } from '../../core/toast.service';
 import { ThemeService, type ThemeMode } from '../../core/theme.service';
+import type { GeoLocationDto } from '@bundle/shared';
 
 @Component({
   selector: 'app-settings-page',
@@ -97,6 +98,44 @@ import { ThemeService, type ThemeMode } from '../../core/theme.service';
             </div>
           }
         </section>
+
+        <!-- Geo & age filters (Premium) -->
+        @if (premium()) {
+        <section class="animate-fade-up glass-card mt-4 p-5" style="animation-delay: 40ms">
+          <h2 class="mb-3 font-display text-[15px] font-bold">Geo &amp; age filters</h2>
+          <p class="mb-4 text-sm text-ink-50/55">Only match with people nearby and in your age range.</p>
+          <label class="flex cursor-pointer items-center justify-between mb-4">
+            <div>
+              <div class="text-sm font-medium">Show people nearby</div>
+              <div class="text-[11px] text-ink-50/45">Uses your last-known location</div>
+            </div>
+            <input type="checkbox" class="h-5 w-5 accent-[#7c4dff]" [ngModel]="geoEnabled()" (ngModelChange)="geoEnabled.set($event)" name="geoEnabled" (change)="autoSaveGeo()" />
+          </label>
+          <div class="space-y-3">
+            <div>
+              <label class="label" for="radius">Search radius</label>
+              <input id="radius" type="range" min="1" max="500" step="5" [ngModel]="radiusKm()" (ngModelChange)="radiusKm.set($event as number)" name="radius" (change)="autoSaveGeo()" />
+              <div class="flex justify-between text-[11px] text-ink-50/45"><span>{{ radiusKm() }} km</span></div>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="label" for="minAge">Min age</label>
+                <input id="minAge" type="number" min="18" max="99" class="input !py-3 w-full" [ngModel]="minAge()" (ngModelChange)="minAge.set($event as number)" name="minAge" (change)="autoSaveGeo()" />
+              </div>
+              <div>
+                <label class="label" for="maxAge">Max age</label>
+                <input id="maxAge" type="number" min="18" max="99" class="input !py-3 w-full" [ngModel]="maxAge()" (ngModelChange)="maxAge.set($event as number)" name="maxAge" (change)="autoSaveGeo()" />
+              </div>
+            </div>
+          </div>
+        </section>
+        } @else {
+        <section class="animate-fade-up glass-card mt-4 p-5" style="animation-delay: 40ms">
+          <h2 class="mb-3 font-display text-[15px] font-bold">Geo &amp; age filters</h2>
+          <p class="mb-3 text-sm text-ink-50/55">Unlock location &amp; age filters to find people nearby.</p>
+          <button routerLink="/premium" class="btn-secondary w-full !py-3 text-sm">✨ Upgrade to Premium</button>
+        </section>
+        }
 
         <!-- Privacy -->
         <section class="animate-fade-up glass-card mt-4 p-5" style="animation-delay: 60ms">
@@ -194,6 +233,10 @@ export class SettingsPage implements OnInit {
   language = signal('');
   country = signal('');
   preferVerified = signal(false);
+  geoEnabled = signal(false);
+  radiusKm = signal(50);
+  minAge = signal(18);
+  maxAge = signal(99);
   visibility = signal<OnlineVisibility>(OnlineVisibility.EVERYONE);
   retentionDays = signal(0);
   notifyFriend = signal(true);
@@ -226,10 +269,11 @@ export class SettingsPage implements OnInit {
 
   async ngOnInit() {
     try {
-      const [me, ent, blk] = await Promise.all([
+      const [me, ent, blk, geo] = await Promise.all([
         this.api.me().toPromise(),
         this.api.entitlements().toPromise(),
         this.api.blockedList().toPromise(),
+        this.api.getGeo().toPromise(),
       ]);
       const p = me?.preferences;
       if (p) {
@@ -243,6 +287,12 @@ export class SettingsPage implements OnInit {
       this.premium.set(ent?.tier === 'PREMIUM');
       this.notifyFriend.set(true);
       this.blocked.set(blk ?? []);
+      if (geo) {
+        this.geoEnabled.set(geo.geoEnabled);
+        this.radiusKm.set(geo.radiusKm);
+        this.minAge.set(geo.minAge);
+        this.maxAge.set(geo.maxAge);
+      }
     } catch {
       this.toast.error('Could not load settings');
     } finally {
@@ -264,6 +314,22 @@ export class SettingsPage implements OnInit {
         .toPromise();
       this.seekingChanged.set(true);
       this.toast.success('Preferences saved');
+    } catch {
+      this.toast.error('Save failed');
+    }
+  }
+
+  async autoSaveGeo() {
+    try {
+      await this.api
+        .updateGeo({
+          geoEnabled: this.geoEnabled(),
+          radiusKm: this.radiusKm(),
+          minAge: this.minAge(),
+          maxAge: this.maxAge(),
+        })
+        .toPromise();
+      this.toast.success('Geo filters saved');
     } catch {
       this.toast.error('Save failed');
     }

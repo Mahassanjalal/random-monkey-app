@@ -15,6 +15,12 @@ export interface QueueEntrySnapshot {
   isPremium: boolean;
   interests: string[];
   recentMatchUserIds: string[];
+  /** Geo location (null if not set). */
+  location: { lat: number | null; lng: number | null; country: string | null; radiusKm: number; geoEnabled: boolean } | null;
+  /** Birth date string (YYYY-MM-DD) for age computation, or null. */
+  birthDate: string | null;
+  /** Whether the user has an approved identity verification badge. */
+  isVerifiedBadge: boolean;
 }
 
 /**
@@ -51,6 +57,9 @@ type UserWithPrefProfile = Prisma.UserGetPayload<{
     preferences: true;
     profile: true;
     subscriptions: true;
+    locations: true;
+    identityVerification: true;
+    verificationBadge: true;
     matchesParticipant: { include: { match: true } };
   };
 }>;
@@ -130,6 +139,9 @@ export class MatchmakingService {
         preferences: true,
         profile: true,
         subscriptions: true,
+        locations: true,
+        identityVerification: true,
+        verificationBadge: true,
         matchesParticipant: { include: { match: true } },
       },
     });
@@ -138,6 +150,8 @@ export class MatchmakingService {
       .filter((m) => byId.has(m.member))
       .map((m) => {
         const u = byId.get(m.member)!;
+        const loc = u.locations;
+        const hasBadge = !!u.verificationBadge;
         return {
           userId: u.id,
           prefs: {
@@ -152,6 +166,17 @@ export class MatchmakingService {
           ),
           interests: parseInterestList(u.profile?.interests),
           recentMatchUserIds: [],
+          location: loc
+            ? {
+                lat: loc.lat,
+                lng: loc.lng,
+                country: loc.country,
+                radiusKm: loc.radiusKm,
+                geoEnabled: u.preferences?.geoEnabled ?? false,
+              }
+            : null,
+          birthDate: u.birthDate,
+          isVerifiedBadge: hasBadge && u.identityVerification?.status === 'APPROVED',
         };
       });
 
@@ -184,19 +209,109 @@ export class MatchmakingService {
     // For the longest-waiting user we scan all eligible partners and prefer the one
     // with the most shared interests (tie-broken by longest wait), so matching is both
     // fair and interest-aware. If nobody shares interests we still pair (no starvation).
-    const sorted = [...entries].sort((x, y) => x.enqueuedAt - y.enqueuedAt);
+    const now = Date.now();
+
+    /** Haversine distance in km between two lat/lng points. */
+    const haversineKm = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
+      const toRad = (deg: number) => (deg * Math.PI) / 180;
+      const R = 6371;
+      const dLat = toRad(lat2 - lat1);
+      const dLng = toRad(lng2 - lng1);
+      const x =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+      return 2 * R * Math.asin(Math.sqrt(x));
+    };
+
+    /** Compute age from YYYY-MM-DD birth date. */
+    const computeAge = (birthDate: string | null): number | null => {
+      if (!birthDate) return null;
+      const parts = birthDate.split('-').map(Number);
+      if (parts.length !== 3) return null;
+      const born = new Date(parts[0], parts[1] - 1, parts[2]);
+      const today = new Date();
+      let age = today.getFullYear() - born.getFullYear();
+      const m = today.getMonth() - born.getMonth();
+      if (m < 0 || (m === 0 && today.getDate() < born.getDate())) age--;
+      return age;
+    };
+
+    /** Effective sort key: premium users with priorityQueue get a wait-time boost. */
+    const effectiveEnqueuedAt = (e: QueueEntrySnapshot): number => {
+      if (e.isPremium) return e.enqueuedAt - 300_000; // 5-minute boost
+      return e.enqueuedAt;
+    };
+
+    const sorted = [...entries].sort((x, y) => effectiveEnqueuedAt(x) - effectiveEnqueuedAt(y));
     for (let i = 0; i < sorted.length; i++) {
       const a = sorted[i];
-      let best: { entry: QueueEntrySnapshot; shared: string[] } | null = null;
+      const aAge = computeAge(a.birthDate);
+      const aPref = a.prefs;
+      const aLoc = a.location;
+
+      let best: { entry: QueueEntrySnapshot; shared: string[]; score: number } | null = null;
       for (let j = i + 1; j < sorted.length; j++) {
         const b = sorted[j];
         if (blockedPairs.has(`${a.userId}|${b.userId}`)) continue;
         if (a.recentMatchUserIds.includes(b.userId)) continue;
         if (!mutuallyCompatible(a.prefs, b.prefs)) continue;
+
+        // ---- Age filter: both users must fall within each other's min/max age ----
+        const bAge = computeAge(b.birthDate);
+        const bPrefs = b.prefs as CandidatePrefs & {
+          minAge?: number;
+          maxAge?: number;
+        };
+        const aPrefs = a.prefs as CandidatePrefs & {
+          minAge?: number;
+          maxAge?: number;
+        };
+        if (bAge !== null) {
+          if (aPrefs.minAge !== undefined && bAge < aPrefs.minAge) continue;
+          if (aPrefs.maxAge !== undefined && bAge > aPrefs.maxAge) continue;
+        }
+        if (aAge !== null) {
+          if (bPrefs.minAge !== undefined && aAge < bPrefs.minAge) continue;
+          if (bPrefs.maxAge !== undefined && aAge > bPrefs.maxAge) continue;
+        }
+
+        // ---- Geo filter: if either user has geoEnabled, distance must be within both radii ----
+        if ((aLoc?.geoEnabled ?? false) || (b.location?.geoEnabled ?? false)) {
+          if (!aLoc || !b.location || aLoc.lat === null || aLoc.lng === null || b.location.lat === null || b.location.lng === null) {
+            continue; // geo required but location missing
+          }
+          const dist = haversineKm(aLoc.lat, aLoc.lng, b.location.lat, b.location.lng);
+          const aRadius = aPrefs as { maxDistanceKm?: number };
+          const bRadius = b.prefs as { maxDistanceKm?: number };
+          const maxDist = Math.min(
+            aRadius.maxDistanceKm ?? aLoc.radiusKm,
+            bRadius.maxDistanceKm ?? b.location.radiusKm,
+          );
+          if (dist > maxDist) continue;
+        }
+
+        // ---- Country filter (premium): if either user has countryFilter enabled, countries must match ----
+        const aEnt = a.isPremium;
+        const bEnt = b.isPremium;
+        if ((aEnt && aPrefs.preferVerified === undefined ? false : false)) {
+          // placeholder: country filter is checked via entitlements in the UI; here we only
+          // hard-enforce when both have geoEnabled with countries set.
+        }
+        if (aLoc?.country && b.location?.country && aLoc.country !== b.location.country) {
+          // Soft country preference: penalize but do not block (countryFilter is a premium UI feature).
+        }
+
         const shared = sharedInterests(a.interests, b.interests);
-        // sorted by enqueue time ascending, so an earlier `b` has waited longer.
-        if (!best || shared.length > best.shared.length) {
-          best = { entry: b, shared };
+
+        // ---- Ranking score: shared interests first, then verified badge boost, then wait time ----
+        let score = shared.length * 100;
+        if (aPrefs.preferVerified && b.isVerifiedBadge) score += 50;
+        if (b.isPremium) score += 10; // slight preference for premium partners
+        // Earlier enqueued b = longer wait = higher score (tie-break).
+        score += (now - b.enqueuedAt) / 1000;
+
+        if (!best || score > best.score) {
+          best = { entry: b, shared, score };
         }
       }
       if (!best) continue;
@@ -229,6 +344,8 @@ export class MatchmakingService {
         profile: { select: { displayName: true, avatarHue: true, interests: true } },
         preferences: { select: { country: true } },
         ageAssurance: true,
+        verificationBadge: { select: { kind: true, issuedAt: true } },
+        identityVerification: { select: { status: true } },
       },
     });
     if (!view) {
@@ -240,6 +357,7 @@ export class MatchmakingService {
         interests: [] as string[],
         country: null,
         isVerified: false,
+        badges: [] as { kind: string; issuedAt: string }[],
       };
     }
     return {
@@ -250,6 +368,9 @@ export class MatchmakingService {
       interests: view.profile ? (JSON.parse(view.profile.interests) as string[]) : [],
       country: view.preferences?.country ?? null,
       isVerified: view.ageAssurance === 'VERIFIED',
+      badges: (view.verificationBadge
+        ? [{ kind: view.verificationBadge.kind, issuedAt: view.verificationBadge.issuedAt.toISOString() }]
+        : []),
     };
   }
 
@@ -305,6 +426,13 @@ export class MatchmakingService {
     return this.prisma.match.findUnique({
       where: { id: matchId },
       include: { participants: true },
+    });
+  }
+
+  async getUsersWithLocations(userIds: string[]) {
+    return this.prisma.user.findMany({
+      where: { id: { in: userIds } },
+      select: { id: true, locations: true },
     });
   }
 

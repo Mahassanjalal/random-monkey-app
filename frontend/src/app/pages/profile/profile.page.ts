@@ -1,7 +1,8 @@
 import { Component, OnInit, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
-import type { KarmaDto } from '@bundle/shared';
+import type { BadgeDto, KarmaDto, VerificationStatus } from '@bundle/shared';
+import { VerificationProvider } from '@bundle/shared';
 import { ApiService, type MePayload } from '../../core/api.service';
 import { ToastService } from '../../core/toast.service';
 import { AvatarComponent } from '../../shared/ui';
@@ -38,6 +39,12 @@ import { AvatarComponent } from '../../shared/ui';
             <span class="chip mt-3 !border-mint/40 !bg-mint/10 !text-mint">✓ Identity verified</span>
           } @else {
             <span class="chip mt-3 !border-amber-400/30 !bg-amber-400/10 !text-amber-200">Age-assurance pending</span>
+          }
+          @if (verification()?.badge; as badge) {
+            <span class="chip mt-2 !border-brand-400/40 !bg-brand-500/10 !text-brand-200">✓ {{ badge.kind }} verified</span>
+          }
+          @if (verification()?.status === 'PENDING') {
+            <span class="chip mt-2 !border-amber-400/30 !bg-amber-400/10 !text-amber-200">⏳ Verification review in progress</span>
           }
           @if (karma(); as k) {
             <div class="mt-3 inline-flex items-center gap-2 rounded-full border border-amber-400/25 bg-amber-400/10 px-3.5 py-1.5">
@@ -100,6 +107,29 @@ import { AvatarComponent } from '../../shared/ui';
             <span class="text-ink-50/30">→</span>
           </a>
         </section>
+
+        <!-- verification -->
+        @if (!me()?.isVerified) {
+        <section class="animate-fade-up glass-card mt-4 p-5" style="animation-delay: 140ms">
+          <h2 class="mb-3 font-display text-[15px] font-bold">Verify your identity</h2>
+          <p class="mb-4 text-sm text-ink-50/55">Get a verified badge so others can trust you're a real adult.</p>
+          @if (verification()?.status !== 'PENDING') {
+            <div class="space-y-2.5">
+              <button (click)="submitSelfie()" [disabled]="submitting()" class="btn-primary w-full">
+                @if (submitting()) { Submitting… } @else { Verify with photo selfie }
+              </button>
+              <button (click)="submitId()" [disabled]="submitting()" class="btn-secondary w-full !py-3 text-sm">
+                Upload ID document
+              </button>
+            </div>
+          } @else {
+            <p class="text-sm text-ink-50/45">Your verification is under review. We'll notify you when it's decided.</p>
+          }
+          @if (verificationError()) {
+            <p class="mt-3 text-[11px] text-red-300">{{ verificationError() }}</p>
+          }
+        </section>
+        }
       }
     </div>
   `,
@@ -111,6 +141,9 @@ export class ProfilePage implements OnInit {
   me = signal<MePayload | null>(null);
   loading = signal(true);
   saving = signal(false);
+  submitting = signal(false);
+  verification = signal<{ status: VerificationStatus | null; badge: BadgeDto | null } | null>(null);
+  verificationError = signal('');
   displayName = signal('');
   bio = signal('');
   hue = signal(210);
@@ -153,9 +186,10 @@ export class ProfilePage implements OnInit {
 
   async ngOnInit() {
     try {
-      const [me, karma] = await Promise.all([
+      const [me, karma, ver] = await Promise.all([
         this.api.me().toPromise(),
         this.api.myKarma().toPromise().catch(() => null),
+        this.api.myVerification().toPromise().catch(() => null),
       ]);
       this.me.set(me ?? null);
       this.displayName.set(me?.profile?.displayName ?? '');
@@ -163,6 +197,7 @@ export class ProfilePage implements OnInit {
       this.hue.set(me?.profile?.avatarHue ?? 210);
       this.interests.set(me?.profile?.interests ?? []);
       this.karma.set(karma ?? null);
+      this.verification.set(ver ? { status: ver.status as VerificationStatus | null, badge: ver.badge ?? null } : null);
     } catch {
       this.toast.error('Could not load profile');
     } finally {
@@ -186,6 +221,38 @@ export class ProfilePage implements OnInit {
       this.toast.error('Save failed — try again');
     } finally {
       this.saving.set(false);
+    }
+  }
+
+  async submitSelfie() {
+    this.submitting.set(true);
+    this.verificationError.set('');
+    try {
+      const selfieUrl = prompt('Paste a selfie image URL (or data URL):');
+      if (!selfieUrl) return;
+      await this.api.submitVerification(VerificationProvider.SELFIE, selfieUrl).toPromise();
+      this.toast.success('Selfie submitted for review');
+      await this.ngOnInit();
+    } catch {
+      this.verificationError.set('Submission failed — try again');
+    } finally {
+      this.submitting.set(false);
+    }
+  }
+
+  async submitId() {
+    this.submitting.set(true);
+    this.verificationError.set('');
+    try {
+      const idUrl = prompt('Paste an ID document image URL (or data URL):');
+      if (!idUrl) return;
+      await this.api.submitVerification(VerificationProvider.ID_DOCUMENT, undefined, idUrl).toPromise();
+      this.toast.success('ID submitted for review');
+      await this.ngOnInit();
+    } catch {
+      this.verificationError.set('Submission failed — try again');
+    } finally {
+      this.submitting.set(false);
     }
   }
 }

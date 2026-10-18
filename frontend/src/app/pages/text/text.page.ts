@@ -4,16 +4,17 @@ import { FormsModule } from '@angular/forms';
 import { RealtimeService, type IncomingChat } from '../../core/realtime.service';
 import { AuthService } from '../../core/auth.service';
 import { ToastService } from '../../core/toast.service';
-import { AvatarComponent, RatingSheetComponent } from '../../shared/ui';
+import { AvatarComponent, RatingSheetComponent, SearchingRadarComponent, MatchCelebrationComponent } from '../../shared/ui';
 
 const EMOJIS = ['👋', '😄', '❤️', '🔥', '😂', '🎉', '👀', '🤝', '😎', '✨'];
 
 @Component({
   selector: 'app-text-page',
   standalone: true,
-  imports: [FormsModule, AvatarComponent, RatingSheetComponent],
+  imports: [FormsModule, AvatarComponent, RatingSheetComponent, SearchingRadarComponent, MatchCelebrationComponent],
   template: `
-    <div class="mx-auto flex h-dvh w-full max-w-lg flex-col">
+    <div class="relative mx-auto flex h-dvh w-full max-w-lg flex-col">
+      <app-match-celebration [burst]="celebrating()" />
       <!-- header -->
       <header class="flex items-center justify-between border-b border-ink-50/10 bg-ink-900/80 px-4 pt-safe pb-3 backdrop-blur-xl">
         <button class="flex items-center gap-2 text-ink-50/60 transition-colors hover:text-ink-50" (click)="end()" aria-label="Leave chat">
@@ -25,7 +26,17 @@ const EMOJIS = ['👋', '😄', '❤️', '🔥', '😂', '🎉', '👀', '🤝'
             <app-avatar [name]="peerName()" [hue]="peerHue()" [size]="34" />
             <div>
               <div class="font-display text-[13px] font-bold leading-tight">{{ peerName() }}</div>
+              @if (peerBadges().length) {
+                <div class="flex flex-wrap gap-1 mt-0.5">
+                  @for (b of peerBadges(); track b.kind) {
+                    <span class="rounded-full bg-brand-500/25 px-2 py-0.5 text-[10px] font-medium text-brand-100">✓ {{ b.kind }}</span>
+                  }
+                </div>
+              }
               <div class="text-[10px] text-ink-50/45">{{ peerTyping() ? 'typing…' : 'random match' }}</div>
+              @if (peerDistance() !== null) {
+                <div class="text-[10px] text-ink-50/45">{{ peerDistance().toFixed(0) }} km away</div>
+              }
             </div>
           </div>
         } @else {
@@ -50,9 +61,8 @@ const EMOJIS = ['👋', '😄', '❤️', '🔥', '😂', '🎉', '👀', '🤝'
       <!-- SEARCHING -->
       @if (phase() === 'waiting') {
         <div class="flex flex-1 flex-col items-center justify-center px-6 text-center">
-          <div class="relative mb-6">
-            <div class="absolute -inset-3 animate-pulse-ring rounded-full bg-brand-500/40"></div>
-            <div class="grid h-20 w-20 animate-pulse place-items-center rounded-full bg-gradient-to-br from-brand-500 to-fuchsia-500 text-3xl">💬</div>
+          <div class="mb-6">
+            <app-searching-radar [size]="150" [core]="56" [emoji]="'💬'"></app-searching-radar>
           </div>
           <h2 class="animate-fade-up font-display text-lg font-bold">Looking for someone to talk to…</h2>
           <p class="mt-2 animate-fade-up text-sm text-ink-50/50" style="animation-delay: 100ms">{{ waitNudge() }}</p>
@@ -69,6 +79,11 @@ const EMOJIS = ['👋', '😄', '❤️', '🔥', '😂', '🎉', '👀', '🤝'
         } @else if (peerReconnecting()) {
           <div class="mx-4 mt-3 animate-pop-in rounded-xl bg-amber-400/15 px-3 py-2 text-center text-xs font-semibold text-amber-300">
             Their connection dropped — waiting up to 20s…
+          </div>
+        }
+        @if (mediaWarning()?.blocked) {
+          <div class="mx-4 mt-3 animate-pop-in rounded-xl bg-red-500/15 px-3 py-2 text-center text-xs font-semibold text-red-300">
+            ⚠️ {{ mediaWarning()?.reason }}
           </div>
         }
         <div #msgList class="flex-1 space-y-2.5 overflow-y-auto px-4 py-4">
@@ -176,11 +191,14 @@ export class TextPage implements OnInit, OnDestroy {
   phase = this.rt.phase;
   peerReconnecting = this.rt.peerReconnecting;
   match = this.rt.matchInfo;
+  mediaWarning = this.rt.mediaWarning;
   msgs = signal<IncomingChat[]>([]);
   peerName = computed(() => this.match()?.peer?.displayName || this.match()?.peer?.username || 'New friend');
   peerHue = computed(() => this.match()?.peer?.avatarHue ?? 210);
   peerVerified = computed(() => !!this.match()?.peer?.isVerified);
+  peerBadges = computed(() => this.match()?.peer?.badges ?? []);
   sharedInterests = computed(() => this.match()?.sharedInterests ?? []);
+  peerDistance = computed(() => this.match()?.peer?.distanceKm ?? null);
   peerTyping = signal(false);
   matched = signal(false);
   myId = signal('');
@@ -190,7 +208,9 @@ export class TextPage implements OnInit, OnDestroy {
   showRating = signal(false);
   lastMatchId = signal('');
   lastPeerName = signal('');
+  celebrating = signal(false);
   private ratedMatchIds = new Set<string>();
+  private lastPhase = '';
 
   constructor() {
     effect(() => {
@@ -202,6 +222,12 @@ export class TextPage implements OnInit, OnDestroy {
       if (this.phase() === 'peer-left' && m && !this.ratedMatchIds.has(m.matchId)) {
         this.showRating.set(true);
       }
+      // celebrate each new match
+      const p = this.phase();
+      if ((p === 'matched' || p === 'in-call') && this.lastPhase !== 'matched' && this.lastPhase !== 'in-call') {
+        this.celebrating.set(true);
+      }
+      this.lastPhase = p;
     });
   }
 
@@ -248,6 +274,11 @@ export class TextPage implements OnInit, OnDestroy {
     }
     this.rt.on('chat:message', this.onChatMessage);
     this.rt.on('chat:typing', this.onChatTyping);
+    this.rt.on('media:warning', (p: { blocked: boolean; reason: string }) => {
+      this.zone.run(() => {
+        this.rt.mediaWarning.set({ blocked: p.blocked, reason: p.reason });
+      });
+    });
     // Derive header state from the shared phase signal (survives reconnects).
     this.matched.set(this.phase() === 'matched' || this.phase() === 'in-call');
     // start immediately

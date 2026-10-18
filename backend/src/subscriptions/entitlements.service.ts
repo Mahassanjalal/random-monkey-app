@@ -27,12 +27,16 @@ export class EntitlementsService {
             countryFilter: PREMIUM_FEATURES.countryFilter,
             extendedInterests: PREMIUM_FEATURES.extendedInterests,
             priorityQueue: PREMIUM_FEATURES.priorityQueue,
+            geoFilter: PREMIUM_FEATURES.preferVerified, // premium unlocks geo filtering
+            verificationBadge: PREMIUM_FEATURES.countryFilter, // premium unlocks badge display
           }
         : {
             preferVerified: false,
             countryFilter: false,
             extendedInterests: false,
             priorityQueue: false,
+            geoFilter: false,
+            verificationBadge: false,
           },
     };
   }

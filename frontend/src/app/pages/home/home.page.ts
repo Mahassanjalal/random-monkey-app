@@ -80,20 +80,31 @@ import { AvatarComponent } from '../../shared/ui';
           <span class="text-[13px] font-semibold text-ink-50/80">Your week</span>
           <a routerLink="/profile" class="text-[11px] text-brand-300 hover:text-brand-200">View profile →</a>
         </div>
-        <div class="grid grid-cols-3 gap-3">
-          <div class="glass-card p-3.5 text-center">
-            <div class="font-display text-xl font-extrabold text-brand-300">{{ stats()?.matches ?? '–' }}</div>
-            <div class="mt-0.5 text-[11px] text-ink-50/45">Matches</div>
+        @if (loading()) {
+          <div class="grid grid-cols-3 gap-3">
+            @for (i of [1, 2, 3]; track i) {
+              <div class="glass-card p-3.5 text-center">
+                <div class="skeleton mx-auto h-6 w-10"></div>
+                <div class="skeleton mx-auto mt-2.5 h-2.5 w-14"></div>
+              </div>
+            }
           </div>
-          <div class="glass-card p-3.5 text-center">
-            <div class="font-display text-xl font-extrabold text-fuchsia-300">{{ stats()?.messages ?? '–' }}</div>
-            <div class="mt-0.5 text-[11px] text-ink-50/45">Messages</div>
+        } @else {
+          <div class="grid grid-cols-3 gap-3">
+            <div class="glass-card p-3.5 text-center">
+              <div class="font-display text-xl font-extrabold text-brand-300">{{ stats()?.matches ?? '–' }}</div>
+              <div class="mt-0.5 text-[11px] text-ink-50/45">Matches</div>
+            </div>
+            <div class="glass-card p-3.5 text-center">
+              <div class="font-display text-xl font-extrabold text-fuchsia-300">{{ stats()?.messages ?? '–' }}</div>
+              <div class="mt-0.5 text-[11px] text-ink-50/45">Messages</div>
+            </div>
+            <div class="glass-card p-3.5 text-center">
+              <div class="font-display text-xl font-extrabold text-mint">✓</div>
+              <div class="mt-0.5 text-[11px] text-ink-50/45">Verified-ready</div>
+            </div>
           </div>
-          <div class="glass-card p-3.5 text-center">
-            <div class="font-display text-xl font-extrabold text-mint">✓</div>
-            <div class="mt-0.5 text-[11px] text-ink-50/45">Verified-ready</div>
-          </div>
-        </div>
+        }
       </section>
     </div>
   `,
@@ -110,6 +121,7 @@ export class HomePage implements OnInit, OnDestroy {
   tier = signal<'FREE' | 'PREMIUM'>('FREE');
   stats = signal<{ matches: number; messages: number } | null>(null);
   starting = signal<'VIDEO' | 'TEXT' | null>(null);
+  loading = signal(true);
   private presenceTimer: ReturnType<typeof setInterval> | null = null;
 
   async ngOnInit() {
@@ -124,6 +136,8 @@ export class HomePage implements OnInit, OnDestroy {
       this.stats.set(s ?? null);
     } catch {
       this.online.set(false);
+    } finally {
+      this.loading.set(false);
     }
     // Live presence: refresh the online count while the dashboard is visible.
     void this.refreshPresence();
