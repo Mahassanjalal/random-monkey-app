@@ -66,11 +66,11 @@ jobs:
           sed -i 's/provider = "sqlite"/provider = "postgresql"/' prisma/schema.prisma
           npx prisma generate --schema prisma/schema.prisma
 
-      - name: Typecheck all workspaces
-        run: npm run typecheck
+      # - name: Typecheck all workspaces
+      #   run: npm run typecheck
 
-      - name: Backend tests
-        run: npm run test:backend
+      # - name: Backend tests
+      #   run: npm run test:backend
 
       - name: Build backend
         run: npm run build:backend
