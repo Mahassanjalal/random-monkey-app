@@ -64,8 +64,6 @@ jobs:
         working-directory: backend
         run: |
           sed -i 's/provider = "sqlite"/provider = "postgresql"/' prisma/schema.prisma
-          rm -rf prisma/migrations
-          mv prisma/migrations-postgres prisma/migrations
           npx prisma generate --schema prisma/schema.prisma
 
       - name: Typecheck all workspaces
@@ -80,9 +78,9 @@ jobs:
       - name: Build frontend
         run: npm run build:frontend
 
-      - name: Run database migrations
+      - name: Push database schema
         working-directory: backend
-        run: npx prisma migrate deploy --schema=prisma/schema.prisma
+        run: npx prisma db push --schema=prisma/schema.prisma --skip-generate
 
       - name: Start backend and run smoke test
         run: |
