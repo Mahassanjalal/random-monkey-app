@@ -33,7 +33,6 @@ jobs:
           - 6379:6379
 
     env:
-      NODE_ENV: production
       PORT: 3001
       DATABASE_URL: postgresql://buddy:buddy@localhost:5432/buddy?schema=public
       REDIS_URL: redis://localhost:6379
@@ -54,11 +53,7 @@ jobs:
           node-version: 20
           cache: npm
 
-      - name: Install root dependencies
-        run: npm install --no-audit --no-fund
-
-      - name: Install backend dependencies (includes @types/* devDependencies)
-        working-directory: backend
+      - name: Install dependencies
         run: npm install --no-audit --no-fund
 
       - name: Build shared contracts
