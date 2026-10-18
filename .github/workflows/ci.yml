@@ -54,8 +54,12 @@ jobs:
           node-version: 20
           cache: npm
 
-      - name: Install dependencies (including workspace devDependencies)
-        run: npm install --workspaces --no-audit --no-fund
+      - name: Install root dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Install backend dependencies (includes @types/* devDependencies)
+        working-directory: backend
+        run: npm install --no-audit --no-fund
 
       - name: Build shared contracts
         run: npm run build:shared
