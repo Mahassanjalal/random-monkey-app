@@ -114,12 +114,17 @@ import { AvatarComponent } from '../../shared/ui';
           <h2 class="mb-3 font-display text-[15px] font-bold">Verify your identity</h2>
           <p class="mb-4 text-sm text-ink-50/55">Get a verified badge so others can trust you're a real adult.</p>
           @if (verification()?.status !== 'PENDING') {
-            <div class="space-y-2.5">
-              <button (click)="submitSelfie()" [disabled]="submitting()" class="btn-primary w-full">
-                @if (submitting()) { Submitting… } @else { Verify with photo selfie }
-              </button>
-              <button (click)="submitId()" [disabled]="submitting()" class="btn-secondary w-full !py-3 text-sm">
-                Upload ID document
+            <div class="space-y-3">
+              <div>
+                <label class="label block text-sm mb-1.5">Photo selfie</label>
+                <input type="file" accept="image/*" (change)="onSelfieFile($event)" [disabled]="submitting()" />
+              </div>
+              <div>
+                <label class="label block text-sm mb-1.5">ID document</label>
+                <input type="file" accept="image/*" (change)="onIdFile($event)" [disabled]="submitting()" />
+              </div>
+              <button (click)="submitVerification()" [disabled]="submitting() || !selfieDataUrl() && !idDataUrl()" class="btn-primary w-full">
+                @if (submitting()) { Submitting… } @else { Submit for review }
               </button>
             </div>
           } @else {
@@ -144,6 +149,8 @@ export class ProfilePage implements OnInit {
   submitting = signal(false);
   verification = signal<{ status: VerificationStatus | null; badge: BadgeDto | null } | null>(null);
   verificationError = signal('');
+  selfieDataUrl = signal<string | null>(null);
+  idDataUrl = signal<string | null>(null);
   displayName = signal('');
   bio = signal('');
   hue = signal(210);
@@ -224,30 +231,39 @@ export class ProfilePage implements OnInit {
     }
   }
 
-  async submitSelfie() {
-    this.submitting.set(true);
-    this.verificationError.set('');
-    try {
-      const selfieUrl = prompt('Paste a selfie image URL (or data URL):');
-      if (!selfieUrl) return;
-      await this.api.submitVerification(VerificationProvider.SELFIE, selfieUrl).toPromise();
-      this.toast.success('Selfie submitted for review');
-      await this.ngOnInit();
-    } catch {
-      this.verificationError.set('Submission failed — try again');
-    } finally {
-      this.submitting.set(false);
-    }
+  onSelfieFile(ev: Event) {
+    const file = (ev.target as HTMLInputElement)?.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => this.selfieDataUrl.set(reader.result as string);
+    reader.readAsDataURL(file);
   }
 
-  async submitId() {
+  onIdFile(ev: Event) {
+    const file = (ev.target as HTMLInputElement)?.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => this.idDataUrl.set(reader.result as string);
+    reader.readAsDataURL(file);
+  }
+
+  async submitVerification() {
     this.submitting.set(true);
     this.verificationError.set('');
     try {
-      const idUrl = prompt('Paste an ID document image URL (or data URL):');
-      if (!idUrl) return;
-      await this.api.submitVerification(VerificationProvider.ID_DOCUMENT, undefined, idUrl).toPromise();
-      this.toast.success('ID submitted for review');
+      const hasSelfie = !!this.selfieDataUrl();
+      const hasId = !!this.idDataUrl();
+      if (!hasSelfie && !hasId) {
+        this.verificationError.set('Please select at least one file');
+        return;
+      }
+      const provider = hasSelfie && hasId ? VerificationProvider.ID_DOCUMENT : (hasSelfie ? VerificationProvider.SELFIE : VerificationProvider.ID_DOCUMENT);
+      await this.api
+        .submitVerification(provider, hasSelfie ? this.selfieDataUrl() ?? undefined : undefined, hasId ? this.idDataUrl() ?? undefined : undefined)
+        .toPromise();
+      this.toast.success('Submitted for review');
+      this.selfieDataUrl.set(null);
+      this.idDataUrl.set(null);
       await this.ngOnInit();
     } catch {
       this.verificationError.set('Submission failed — try again');

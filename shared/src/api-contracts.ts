@@ -354,6 +354,7 @@ export type UpdateGeoDto = z.infer<typeof updateGeoSchema>;
 
 export interface GeoLocationDto {
   country: string | null;
+  region: string | null;
   city: string | null;
   lat: number | null;
   lng: number | null;

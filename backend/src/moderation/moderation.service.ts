@@ -65,7 +65,7 @@ export class ModerationService {
       }
       // unknown provider: fail open
       return { blocked: false, flaggedLabels: [], scores: {}, confidence: 0, provider };
-    } catch (e) {
+    } catch (e: unknown) {
       logger.warn({ err: String(e), provider }, 'moderation provider error; failing open');
       return {
         blocked: false,
@@ -126,6 +126,78 @@ export class ModerationService {
     };
   }
 
+  /** Vision-capable media moderation via OpenAI GPT-4V chat completions. */
+  private async checkMediaOpenAIVision(imageDataUrl: string, apiKey: string): Promise<MediaVerdict> {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o',
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: 'Analyze this image for nudity, sexual content involving minors, extreme violence, self-harm, hate symbols, or other policy violations. Respond with JSON only: { "flagged": boolean, "labels": string[], "confidence": number (0-1) }.',
+              },
+              { type: 'image_url', image_url: { url: imageDataUrl } },
+            ],
+          },
+        ],
+        max_tokens: 200,
+      }),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) throw new Error(`openai vision http ${res.status}`);
+    const json = (await res.json()) as {
+      choices: { message: { content: string } }[];
+    };
+    const content = json.choices?.[0]?.message?.content ?? '{}';
+    let parsed: { flagged?: boolean; labels?: string[]; confidence?: number };
+    try {
+      parsed = JSON.parse(content);
+    } catch {
+      parsed = { flagged: false, labels: [], confidence: 0 };
+    }
+    const flagged = !!parsed.flagged;
+    const labels = Array.isArray(parsed.labels) ? parsed.labels : [];
+    const confidence = typeof parsed.confidence === 'number' ? parsed.confidence : 0;
+
+    // High-severity labels block outright.
+    const hardBlock = flagged && labels.some((l) =>
+      ['sexual', 'nudity', 'minors', 'child', 'violence', 'self-harm'].some((k) =>
+        l.toLowerCase().includes(k),
+      ),
+    );
+
+    if (flagged && !hardBlock) {
+      void this.prisma.moderationCase.create({
+        data: {
+          subjectUserId: 'system',
+          source: 'AI_VIDEO',
+          reason: labels.join(', ') || 'MEDIA_FLAGGED',
+          severity: 'MEDIUM',
+          status: 'OPEN',
+          aiScoresJson: JSON.stringify({ confidence }),
+          aiProvider: 'openai-vision',
+          aiConfidence: confidence,
+        },
+      }).catch(() => undefined);
+    }
+
+    return {
+      blocked: hardBlock,
+      flaggedLabels: labels,
+      scores: { vision: confidence },
+      confidence,
+      provider: 'openai-vision',
+    };
+  }
+
   /**
    * Media moderation for a frame/segment captured during a call.
    * Fail-open when provider is unconfigured: records a verdict but does not block.
@@ -149,42 +221,18 @@ export class ModerationService {
 
     if (provider !== 'none' && cfg.moderationApiKey) {
       try {
-        // Re-use the text moderation provider endpoint by sending the image as a base64 data URL.
-        // Providers that support vision (e.g. OpenAI omni-moderation) can analyze it.
-        const res = await fetch('https://api.openai.com/v1/moderations', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.moderationApiKey}` },
-          body: JSON.stringify({ model: 'omni-moderation-latest', input: imageDataUrl }),
-          signal: AbortSignal.timeout(5000),
-        });
-        if (res.ok) {
-          const json = (await res.json()) as {
-            results: {
-              flagged: boolean;
-              categories: Record<string, boolean>;
-              category_scores: Record<string, number>;
-            }[];
-          };
-          const r = json.results?.[0];
-          const flaggedLabels = r
-            ? Object.entries(r.categories)
-                .filter(([, v]) => v)
-                .map(([k]) => k)
-            : [];
-          const hardBlock = flaggedLabels.some((l) =>
-            ['sexual/minors', 'violence/graphic', 'self-harm/instructions'].includes(l),
-          );
-          verdict = {
-            blocked: hardBlock,
-            flaggedLabels,
-            scores: r?.category_scores ?? {},
-            confidence: r ? Math.max(0, ...Object.values(r.category_scores ?? { 0: 0 })) : 0,
-            provider: 'openai',
-          };
+        // Vision-capable media moderation. Send the image as a base64 data URL to a
+        // multimodal moderation provider (e.g. OpenAI GPT-4V via chat completions,
+        // AWS Rekognition, Google Vision, or Sightengine). The OpenAI /moderations
+        // endpoint is text-only and is NOT used for image analysis.
+        if (provider === 'openai-vision') {
+          verdict = await this.checkMediaOpenAIVision(imageDataUrl, cfg.moderationApiKey);
         } else {
-          verdict.provider = `${provider}:error`;
+          // Unknown or text-only provider: fail open, record degraded metric.
+          logger.warn({ provider }, 'media moderation provider not vision-capable; failing open');
+          verdict.provider = `${provider}:not-vision-capable`;
         }
-      } catch (e) {
+      } catch (e: unknown) {
         logger.warn({ err: String(e), provider }, 'media moderation provider error; failing open');
         verdict.provider = `${provider}:error`;
       }

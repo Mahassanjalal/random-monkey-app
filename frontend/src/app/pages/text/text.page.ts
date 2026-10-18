@@ -244,6 +244,7 @@ export class TextPage implements OnInit, OnDestroy {
 
   private typingHideTimer: ReturnType<typeof setTimeout> | null = null;
   private typingStopTimer: ReturnType<typeof setTimeout> | null = null;
+  private mediaWarningHandler: ((p: { blocked: boolean; reason: string }) => void) | null = null;
   private waitTick: ReturnType<typeof setInterval> | null = null;
   private waited = 0;
   private lastTypingSent = 0;
@@ -274,11 +275,12 @@ export class TextPage implements OnInit, OnDestroy {
     }
     this.rt.on('chat:message', this.onChatMessage);
     this.rt.on('chat:typing', this.onChatTyping);
-    this.rt.on('media:warning', (p: { blocked: boolean; reason: string }) => {
+    this.mediaWarningHandler = (p: { blocked: boolean; reason: string }) => {
       this.zone.run(() => {
         this.rt.mediaWarning.set({ blocked: p.blocked, reason: p.reason });
       });
-    });
+    };
+    this.rt.on('media:warning', this.mediaWarningHandler);
     // Derive header state from the shared phase signal (survives reconnects).
     this.matched.set(this.phase() === 'matched' || this.phase() === 'in-call');
     // start immediately
@@ -375,6 +377,10 @@ export class TextPage implements OnInit, OnDestroy {
     if (this.typingStopTimer) clearTimeout(this.typingStopTimer);
     this.rt.off('chat:message', this.onChatMessage);
     this.rt.off('chat:typing', this.onChatTyping);
+    if (this.mediaWarningHandler) {
+      this.rt.off('media:warning', this.mediaWarningHandler);
+      this.mediaWarningHandler = null;
+    }
     void this.rt.leaveQueue();
   }
 }

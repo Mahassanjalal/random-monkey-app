@@ -1,5 +1,7 @@
-const { PrismaClient } = require('@prisma/client');
+import { PrismaClient } from '@prisma/client';
+
 const prisma = new PrismaClient();
+
 async function main() {
   for (const p of [
     { key: 'credits_100', name: '100 Credits', priceCents: 499, currency: 'USD', credits: 100, active: true },
@@ -15,4 +17,8 @@ async function main() {
   console.log('Credit products seeded');
   await prisma.$disconnect();
 }
-main().catch((e) => { console.error(e); process.exit(1); });
+
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

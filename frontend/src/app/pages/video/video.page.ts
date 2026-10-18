@@ -316,14 +316,17 @@ export class VideoPage implements OnInit, OnDestroy {
       }, 7000);
     });
 
+  private mediaWarningHandler: ((p: { blocked: boolean; reason: string }) => void) | null = null;
+
   async ngOnInit() {
     this.myId.set(this.auth.user()?.id ?? '');
     this.rt.on('chat:message', this.onChatMessage);
-    this.rt.on('media:warning', (p: { blocked: boolean; reason: string }) => {
+    this.mediaWarningHandler = (p: { blocked: boolean; reason: string }) => {
       this.zone.run(() => {
         this.rt.mediaWarning.set({ blocked: p.blocked, reason: p.reason });
       });
-    });
+    };
+    this.rt.on('media:warning', this.mediaWarningHandler);
 
     // poll remote stream signal (Angular signals have no .subscribe in stable API)
     const check = setInterval(() => {
@@ -483,27 +486,34 @@ export class VideoPage implements OnInit, OnDestroy {
   }
 
   async reportMedia() {
-    const stream = this.rt.localStreamView;
-    if (!stream) {
-      this.toast.error('No local media to capture');
-      return;
-    }
-    const track = stream.getVideoTracks()[0];
-    if (!track) {
-      this.toast.error('No camera track available');
+    const match = this.match();
+    if (!match) {
+      this.toast.error('No active match');
       return;
     }
     try {
-      // Capture a frame from the local video.
+      // Capture a frame from the peer video (what the user is seeing) or local PiP.
+      const videoEl = this.remoteVideo()?.nativeElement ?? this.pipVideo()?.nativeElement;
+      if (!videoEl) {
+        this.toast.error('No video element available');
+        return;
+      }
+      if (videoEl.readyState < 2) {
+        // HAVE_CURRENT_DATA not yet available; wait one frame and retry once.
+        await new Promise((r) => setTimeout(r, 200));
+      }
+      if (videoEl.readyState < 2) {
+        this.toast.error('Video frame not ready yet');
+        return;
+      }
       const canvas = document.createElement('canvas');
-      const settings = track.getSettings();
-      canvas.width = settings.width ?? 640;
-      canvas.height = settings.height ?? 480;
+      canvas.width = videoEl.videoWidth || 640;
+      canvas.height = videoEl.videoHeight || 480;
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error('No canvas context');
-      ctx.drawImage(this.pipVideo()?.nativeElement ?? this.previewVideo()?.nativeElement ?? new Image(), 0, 0);
+      ctx.drawImage(videoEl, 0, 0);
       const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
-      const r = await this.rt.sendMediaFrame(this.match()!.matchId, 'VIDEO_FRAME', dataUrl);
+      const r = await this.rt.sendMediaFrame(match.matchId, 'VIDEO_FRAME', dataUrl);
       if (r.blocked) {
         this.toast.error('Media flagged by moderation: ' + (r.labels.join(', ') || 'unknown'));
       } else {
@@ -526,6 +536,10 @@ export class VideoPage implements OnInit, OnDestroy {
     if (this.remotePoll) clearInterval(this.remotePoll);
     if (this.typingTimer) clearTimeout(this.typingTimer);
     this.rt.off('chat:message', this.onChatMessage);
+    if (this.mediaWarningHandler) {
+      this.rt.off('media:warning', this.mediaWarningHandler);
+      this.mediaWarningHandler = null;
+    }
     this.rt.stopLocalMedia();
     void this.rt.leaveQueue();
   }

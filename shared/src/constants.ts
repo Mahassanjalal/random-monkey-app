@@ -11,4 +11,6 @@ export const PREMIUM_FEATURES = {
   countryFilter: true,
   extendedInterests: true,
   priorityQueue: true,
+  geoFilter: true,
+  verificationBadge: true,
 } as const;

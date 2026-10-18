@@ -21,6 +21,8 @@ export interface QueueEntrySnapshot {
   birthDate: string | null;
   /** Whether the user has an approved identity verification badge. */
   isVerifiedBadge: boolean;
+  /** Premium country-filter entitlement active (geoEnabled + premium). */
+  countryFilter: boolean;
 }
 
 /**
@@ -177,6 +179,9 @@ export class MatchmakingService {
             : null,
           birthDate: u.birthDate,
           isVerifiedBadge: hasBadge && u.identityVerification?.status === 'APPROVED',
+          countryFilter: u.subscriptions.some(
+            (s) => s.status === 'ACTIVE' && (s.currentPeriodEnd?.getTime() ?? 0) > Date.now(),
+          ) && !!(u.locations?.country),
         };
       });
 
@@ -291,14 +296,8 @@ export class MatchmakingService {
         }
 
         // ---- Country filter (premium): if either user has countryFilter enabled, countries must match ----
-        const aEnt = a.isPremium;
-        const bEnt = b.isPremium;
-        if ((aEnt && aPrefs.preferVerified === undefined ? false : false)) {
-          // placeholder: country filter is checked via entitlements in the UI; here we only
-          // hard-enforce when both have geoEnabled with countries set.
-        }
-        if (aLoc?.country && b.location?.country && aLoc.country !== b.location.country) {
-          // Soft country preference: penalize but do not block (countryFilter is a premium UI feature).
+        if ((a.countryFilter || b.countryFilter) && aLoc?.country && b.location?.country) {
+          if (aLoc.country !== b.location.country) continue;
         }
 
         const shared = sharedInterests(a.interests, b.interests);

@@ -12,6 +12,7 @@
     "prisma:deploy": "prisma migrate deploy --schema prisma/schema.prisma",
     "prisma:push": "prisma db push --schema prisma/schema.prisma --skip-generate",
     "prisma:seed": "node dist/prisma/seed.js",
+    "prisma:seed:ts": "ts-node -P tsconfig.json src/prisma/seed.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "jest --runInBand",
     "test:watch": "jest --watch"

@@ -36,10 +36,10 @@ services:
       retries: 12
 
   coturn:
-    image: coturn/coturn:4.6.2
+    image: coturn/coturn:4.5.1.1-alpine
     restart: unless-stopped
     command: [
-      '-n',                   # no stderr logging to syslog
+      '-n',
       '--log-file=stdout',
       '--external-ip=${COTURN_EXTERNAL_IP:-0.0.0.0}',
       '--listening-port=3478',
@@ -59,8 +59,8 @@ services:
       - '5349:5349/tcp'
       - '49152-65535:49152-65535/udp'
     healthcheck:
-      # coturn image ships no turnadmin; verify the process listens on the UDP port.
-      test: ['CMD-SHELL', '(command -v nc >/dev/null && nc -z -u 127.0.0.1 3478) || (command -v timeout >/dev/null && timeout 2 bash -c \"</dev/tcp/127.0.0.1/3478\") || exit 0']
+      # coturn alpine image lacks nc/bash; verify the process is running.
+      test: ['CMD-SHELL', 'pgrep turnserver > /dev/null || exit 1']
       interval: 15s
       timeout: 5s
       retries: 6

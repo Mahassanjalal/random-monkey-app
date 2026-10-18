@@ -27,8 +27,8 @@ export class EntitlementsService {
             countryFilter: PREMIUM_FEATURES.countryFilter,
             extendedInterests: PREMIUM_FEATURES.extendedInterests,
             priorityQueue: PREMIUM_FEATURES.priorityQueue,
-            geoFilter: PREMIUM_FEATURES.preferVerified, // premium unlocks geo filtering
-            verificationBadge: PREMIUM_FEATURES.countryFilter, // premium unlocks badge display
+            geoFilter: PREMIUM_FEATURES.geoFilter,
+            verificationBadge: PREMIUM_FEATURES.verificationBadge,
           }
         : {
             preferVerified: false,

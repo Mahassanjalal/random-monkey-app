@@ -134,12 +134,29 @@ export class PaymentsService {
       });
     }
     switch (event.type) {
-      case 'checkout.session.completed':
-      case 'customer.subscription.created':
-      case 'invoice.payment_succeeded': {
-        const planKey =
-          ((event.data.object as { metadata?: { planKey?: string } }).metadata?.planKey ?? '') ||
-          'premium_monthly';
+      case 'checkout.session.completed': {
+        const metadata = (event.data.object as { metadata?: Record<string, string> }).metadata ?? {};
+        const productKey = metadata.productKey ?? '';
+        const credits = Number(metadata.credits ?? '0');
+        const idempotencyKey = metadata.idempotencyKey ?? event.id;
+
+        // One-time credit purchase: fulfill credits via ledger.
+        if (productKey && credits > 0) {
+          await this.fulfillCreditPurchase(userId, productKey, credits, idempotencyKey);
+          await this.prisma.paymentTransaction.update({
+            where: { id: tx.id },
+            data: {
+              status: 'SUCCEEDED',
+              amountCents: 0, // credit pack price already set at creation
+              completedAt: new Date(),
+            },
+          });
+          logger.info({ userId, productKey, credits, eventId: event.id }, 'credit purchase fulfilled via webhook');
+          return { handled: 'succeeded' };
+        }
+
+        // Subscription checkout.
+        const planKey = metadata.planKey ?? 'premium_monthly';
         const plan = this.subs.getPlan(planKey) ?? this.subs.getPlan('premium_monthly')!;
         const periodEnd = new Date(
           Date.now() + (plan.interval === 'month' ? 30 : 365) * 24 * 3600 * 1000,
