@@ -1,4 +1,5 @@
 name: ci
+
 on:
   push:
     branches: [main]
@@ -7,22 +8,99 @@ on:
 jobs:
   build-test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: buddy
+          POSTGRES_PASSWORD: buddy
+          POSTGRES_DB: buddy
+        options: >-
+          --health-cmd "pg_isready -U buddy -d buddy"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    env:
+      NODE_ENV: production
+      PORT: 3001
+      DATABASE_URL: postgresql://buddy:buddy@localhost:5432/buddy?schema=public
+      REDIS_URL: redis://localhost:6379
+      REDIS_ENABLED: true
+      JWT_SECRET: ci-insecure-jwt-secret-do-not-use-in-production
+      CORS_ORIGINS: http://localhost:4000
+      TURN_SECRET: ci-turn-secret-do-not-use-in-production
+      ICE_SERVERS: stun:stun.l.google.com:19302
+      MODERATION_PROVIDER: none
+      PAYMENTS_PROVIDER: DISABLED
+
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
-      - run: npm ci
-      - run: npm run build:shared
-      - run: npm run typecheck
-      - run: npm run test:backend
-      - run: npm run build:backend
-      - run: npm run build:frontend
-      - name: smoke (needs postgres+redis)
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Build shared contracts
+        run: npm run build:shared
+
+      - name: Typecheck all workspaces
+        run: npm run typecheck
+
+      - name: Backend tests
+        run: npm run test:backend
+
+      - name: Build backend
+        run: npm run build:backend
+
+      - name: Build frontend
+        run: npm run build:frontend
+
+      - name: Switch Prisma schema to Postgres and switch migrations
+        working-directory: backend
         run: |
-          docker compose -f infra/docker/docker-compose.yml up -d db redis
-          sleep 5
-          npm run prisma:migrate || true
-          npm run dev:backend & sleep 8
-          npm run smoke || true
+          sed -i 's/provider = "sqlite"/provider = "postgresql"/' prisma/schema.prisma
+          rm -rf prisma/migrations
+          mv prisma/migrations-postgres prisma/migrations
+          npx prisma generate --schema prisma/schema.prisma
+
+      - name: Run database migrations
+        working-directory: backend
+        run: npx prisma migrate deploy --schema=prisma/schema.prisma
+
+      - name: Start backend and run smoke test
+        run: |
+          npm run start --workspace backend &
+          BACKEND_PID=$!
+          # Wait for backend to be ready (up to 60 seconds)
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:${PORT}/health/live > /dev/null 2>&1; then
+              echo "Backend is ready"
+              break
+            fi
+            echo "Waiting for backend... ($i/30)"
+            sleep 2
+          done
+          # Run smoke test
+          npm run smoke
+          EXIT_CODE=$?
+          # Stop the backend server
+          kill $BACKEND_PID 2>/dev/null || true
+          wait $BACKEND_PID 2>/dev/null || true
+          exit $EXIT_CODE
