@@ -114,17 +114,17 @@ import type { GeoLocationDto } from '@bundle/shared';
           <div class="space-y-3">
             <div>
               <label class="label" for="radius">Search radius</label>
-              <input id="radius" type="range" min="1" max="500" step="5" [ngModel]="radiusKm()" (ngModelChange)="radiusKm.set($event as number)" name="radius" (change)="autoSaveGeo()" />
+              <input id="radius" type="range" min="1" max="500" step="5" [ngModel]="radiusKm()" (ngModelChange)="radiusKm.set(+$event)" name="radius" (change)="autoSaveGeo()" />
               <div class="flex justify-between text-[11px] text-ink-50/45"><span>{{ radiusKm() }} km</span></div>
             </div>
             <div class="grid grid-cols-2 gap-3">
               <div>
                 <label class="label" for="minAge">Min age</label>
-                <input id="minAge" type="number" min="18" max="99" class="input !py-3 w-full" [ngModel]="minAge()" (ngModelChange)="minAge.set($event as number)" name="minAge" (change)="autoSaveGeo()" />
+                <input id="minAge" type="number" min="18" max="99" class="input !py-3 w-full" [ngModel]="minAge()" (ngModelChange)="minAge.set(+$event)" name="minAge" (change)="autoSaveGeo()" />
               </div>
               <div>
                 <label class="label" for="maxAge">Max age</label>
-                <input id="maxAge" type="number" min="18" max="99" class="input !py-3 w-full" [ngModel]="maxAge()" (ngModelChange)="maxAge.set($event as number)" name="maxAge" (change)="autoSaveGeo()" />
+                <input id="maxAge" type="number" min="18" max="99" class="input !py-3 w-full" [ngModel]="maxAge()" (ngModelChange)="maxAge.set(+$event)" name="maxAge" (change)="autoSaveGeo()" />
               </div>
             </div>
           </div>

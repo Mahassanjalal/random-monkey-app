@@ -98,7 +98,7 @@ import { AvatarComponent, RatingSheetComponent, SearchingRadarComponent, MatchCe
                   </div>
                 }
                 @if (peerDistance() !== null) {
-                  <div class="mt-1 text-[10px] text-ink-50/45">{{ peerDistance().toFixed(0) }} km away</div>
+                  <div class="mt-1 text-[10px] text-ink-50/45">{{ peerDistance()!.toFixed(0) }} km away</div>
                 }
               </div>
             </div>

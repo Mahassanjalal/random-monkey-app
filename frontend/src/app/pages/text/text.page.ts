@@ -35,7 +35,7 @@ const EMOJIS = ['👋', '😄', '❤️', '🔥', '😂', '🎉', '👀', '🤝'
               }
               <div class="text-[10px] text-ink-50/45">{{ peerTyping() ? 'typing…' : 'random match' }}</div>
               @if (peerDistance() !== null) {
-                <div class="text-[10px] text-ink-50/45">{{ peerDistance().toFixed(0) }} km away</div>
+                <div class="text-[10px] text-ink-50/45">{{ peerDistance()!.toFixed(0) }} km away</div>
               }
             </div>
           </div>
